@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Git
+
+Do not add Co-Authored-By lines to commit messages.
+
 ## Build
 
 ```bash
