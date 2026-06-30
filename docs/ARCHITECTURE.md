@@ -1,0 +1,43 @@
+# 架构说明
+
+状态：草案
+当前实现：框架层存在，短链接业务层尚未实现
+
+## 分层
+
+```text
+apps/shortlink_server/      短链接业务层
+HttpServer/                 HTTP 框架层
+muduo                       网络库
+```
+
+`HttpServer/` 是当前已有的框架层，负责 HTTP 请求解析、路由、中间件、响应构造等基础能力。
+`apps/shortlink_server/` 是业务应用层，后续用于承载短链接 API 和业务逻辑。
+
+## 请求流
+
+```text
+muduo TcpServer
+  -> HttpServer
+  -> HttpContext
+  -> Router / Middleware
+  -> Handler
+  -> HttpResponse
+```
+
+该请求流描述当前框架的目标结构，后续实现短链接业务时应尽量复用现有框架能力。
+
+## 边界约定
+
+- 不重写整个框架。
+- 暂时不重命名 `HttpServer/`。
+- 业务代码应放在 `apps/shortlink_server/`。
+- 框架增强应保持小步修改，并避免引入短链接业务耦合。
+- 数据库、缓存、部署和限流能力在明确任务前不提前接入。
+
+## 后续关注点
+
+- 请求日志如何接入框架层。
+- 统一错误响应如何和路由、handler 协作。
+- JSON 响应辅助工具应放在框架层还是业务层。
+- 配置加载如何同时服务框架和业务应用。
