@@ -21,6 +21,15 @@ void HttpResponse::setErrorResponse(HttpStatusCode statusCode,
                 "\",\"message\":\"" + utils::escapeJsonString(message) + "\"}}");
 }
 
+void HttpResponse::setRedirect(const std::string& location)
+{
+    setStatusCode(k302Found);
+    setStatusMessage("Found");
+    addHeader("Location", location);
+    setContentLength(0);
+    setBody("");
+}
+
 void HttpResponse::appendToBuffer(muduo::net::Buffer* outputBuf) const
 {
     // HttpResponse封装的信息格式化输出

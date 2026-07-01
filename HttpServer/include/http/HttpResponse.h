@@ -18,6 +18,7 @@ public:
         k200Ok = 200,
         k204NoContent = 204,
         k301MovedPermanently = 301,
+        k302Found = 302,
         k400BadRequest = 400,
         k401Unauthorized = 401,
         k403Forbidden = 403,
@@ -69,6 +70,7 @@ public:
     void setErrorResponse(HttpStatusCode statusCode,
                           const std::string& errorCode,
                           const std::string& message);
+    void setRedirect(const std::string& location);
 
     void setStatusLine(const std::string& version,
                          HttpStatusCode statusCode,
