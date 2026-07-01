@@ -24,10 +24,19 @@ public:
     { return file_.is_open(); }
     
     // 重置打开默认文件
-    void resetDefaultFile()
+    void resetDefaultFile(const std::string& defaultPath = "")
     {
         file_.close();
-        file_.open("/Gomoku/GomokuServer/resource/NotFound.html", std::ios::binary);
+        file_.clear();
+
+        if (defaultPath.empty())
+        {
+            LOG_ERROR << "Default file path is not configured";
+            return;
+        }
+
+        filePath_ = defaultPath;
+        file_.open(filePath_, std::ios::binary);
     }
 
     uint64_t size()
