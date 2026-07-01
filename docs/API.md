@@ -75,9 +75,23 @@ GET /s/{code}
 Location: https://example.com/very/long/path
 ```
 
+## 错误响应
+
+状态：暂定
+
+框架层默认错误响应使用 JSON 格式：
+
+```json
+{
+  "error": {
+    "code": "not_found",
+    "message": "Not Found"
+  }
+}
+```
+
 ## 待补充
 
-- 错误响应格式。
 - URL 校验规则。
 - 短码字符集和长度。
 - 请求和响应字段的完整规范。

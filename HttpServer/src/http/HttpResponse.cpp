@@ -1,7 +1,25 @@
 #include "../../include/http/HttpResponse.h"
+#include "../../include/utils/JsonUtil.h"
 
 namespace http
 {
+
+void HttpResponse::setJsonBody(const std::string& body)
+{
+    setContentType("application/json; charset=utf-8");
+    setContentLength(body.size());
+    setBody(body);
+}
+
+void HttpResponse::setErrorResponse(HttpStatusCode statusCode,
+                                    const std::string& errorCode,
+                                    const std::string& message)
+{
+    setStatusCode(statusCode);
+    setStatusMessage(message);
+    setJsonBody("{\"error\":{\"code\":\"" + utils::escapeJsonString(errorCode) +
+                "\",\"message\":\"" + utils::escapeJsonString(message) + "\"}}");
+}
 
 void HttpResponse::appendToBuffer(muduo::net::Buffer* outputBuf) const
 {

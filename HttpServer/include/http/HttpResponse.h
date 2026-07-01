@@ -1,5 +1,9 @@
 #pragma once
 
+#include <cstdint>
+#include <map>
+#include <string>
+
 #include <muduo/net/TcpServer.h>
 
 namespace http
@@ -23,8 +27,10 @@ public:
     };
 
     HttpResponse(bool close = true)
-        : statusCode_(kUnknown)
+        : httpVersion_("HTTP/1.1")
+        , statusCode_(kUnknown)
         , closeConnection_(close)
+        , isFile_(false)
     {}
 
     void setVersion(std::string version)
@@ -58,6 +64,11 @@ public:
         body_ = body;
         // body_ += "\0";
     }
+
+    void setJsonBody(const std::string& body);
+    void setErrorResponse(HttpStatusCode statusCode,
+                          const std::string& errorCode,
+                          const std::string& message);
 
     void setStatusLine(const std::string& version,
                          HttpStatusCode statusCode,
