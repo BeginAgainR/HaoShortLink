@@ -12,7 +12,14 @@
 - 确认项目在 Linux 环境中可构建。
 - 防止基础编译错误进入后续任务。
 
-当前状态：尚未执行。
+当前状态：已通过首次 Linux VM 构建验证。
+
+最近一次验证：
+
+- 环境：OrbStack Linux VM `haoHTTP`
+- 项目路径：`/Users/hao/Code/haoHTTP`
+- 构建目录：`/tmp/haoHTTP-build`
+- 结果：`[100%] Built target shortlink_server`
 
 触发条件：
 

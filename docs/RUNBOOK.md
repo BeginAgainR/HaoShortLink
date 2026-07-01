@@ -27,6 +27,28 @@
 - OrbStack Linux VM：`haoHTTP`
 - 进入方式：`ssh haoHTTP@orb`
 - 项目路径：`/Users/hao/Code/haoHTTP`
+- 当前分支：`refactor/hao-shortlink-cleanup`
+
+当前 VM 已安装：
+
+- 基础构建工具：`build-essential`、`cmake`、`git`、`pkg-config`
+- 开发依赖：`libssl-dev`、`libmysqlclient-dev`、`libmysqlcppconn-dev`
+- muduo 核心库：`muduo_base`、`muduo_net`
+
+本地 muduo 安装位置：
+
+```text
+/opt/muduo-src
+/usr/local/include/muduo
+/usr/local/lib/libmuduo_base.a
+/usr/local/lib/libmuduo_net.a
+```
+
+说明：
+
+- HaoShortLink 当前只依赖 `muduo_base` 和 `muduo_net`。
+- muduo 自带的可选 `muduo_http` 组件不是当前项目依赖。
+- muduo 全量构建在 GCC 15 下可能因 `-Werror` 将警告提升为错误；当前只安装项目需要的核心库。
 
 ## 开发与验证工作流
 
@@ -43,6 +65,7 @@ OrbStack Linux VM 构建、运行和验证
 - 构建命令必须在 Linux VM 中执行。
 - Mac 宿主机只负责编辑、查看 diff 和提交。
 - 构建产物不得提交到仓库。
+- 日常构建目录使用 `/tmp/haoHTTP-build`，不要在仓库内生成 `build/`。
 
 ## 验证方式
 
@@ -74,11 +97,31 @@ cd /Users/hao/Code/haoHTTP
 
 待补充内容：
 
-- 依赖安装。
-- 构建命令。
 - 服务启动命令。
 - 配置文件说明。
 - 常见故障排查。
+
+## 构建验证
+
+当前构建命令：
+
+```bash
+ssh haoHTTP@orb
+cmake -S /Users/hao/Code/haoHTTP -B /tmp/haoHTTP-build
+cmake --build /tmp/haoHTTP-build -j2
+```
+
+当前结果：
+
+```text
+[100%] Built target shortlink_server
+```
+
+输出文件：
+
+```text
+/tmp/haoHTTP-build/shortlink_server
+```
 
 ## 当前文档任务验证
 

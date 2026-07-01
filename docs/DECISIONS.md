@@ -73,6 +73,23 @@ GET  /s/{code}
 
 302 表示临时重定向，适合作为短链接服务的默认行为，避免客户端过度缓存跳转结果。
 
+### muduo 依赖范围
+
+状态：已确认
+
+当前项目只依赖 muduo 的核心库：
+
+```text
+muduo_base
+muduo_net
+```
+
+说明：
+
+- `HttpServer/` 是项目自己的 HTTP 框架层，不依赖 muduo 自带的 `muduo_http` 组件。
+- 在当前 VM 的 GCC 15 环境下，muduo 全量构建可能因 `muduo_http` 的 warning-as-error 失败。
+- 当前只安装和链接项目需要的核心库，后续如需其他 muduo 组件再单独决策。
+
 ## 待决策
 
 ### 短码生成策略
