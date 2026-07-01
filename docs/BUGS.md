@@ -16,12 +16,12 @@ ID：
 
 ## BUG-001：旧 404 文件路径残留
 
-状态：待修复
+状态：已修复
 范围：`HttpServer/`
 
 描述：
 
-`HttpServer/include/utils/FileUtil.h` 中仍存在旧五子棋项目的 404 文件路径。
+`HttpServer/include/utils/FileUtil.h` 中曾存在旧五子棋项目的 404 文件路径。
 
 影响：
 
@@ -29,7 +29,7 @@ ID：
 
 下一步：
 
-在框架清理任务中修复，不在当前文档任务中修改 C++ 源码。
+已移除旧业务绝对路径。`FileUtil::resetDefaultFile()` 现在支持传入默认文件路径；未配置默认路径时不再回退到旧业务资源。
 
 ## 不记录的内容
 
