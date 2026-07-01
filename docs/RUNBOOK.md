@@ -95,10 +95,34 @@ cd /Users/hao/Code/haoHTTP
 干净克隆验证更接近 CI，因为它从远端仓库拉取代码，可以发现漏提交文件、本地隐藏依赖和
 `.gitignore` 配置问题。
 
+## 配置文件
+
+当前配置加载使用简单 `key=value` 文本格式。
+
+示例文件：
+
+```text
+apps/shortlink_server/config/server.conf.example
+```
+
+示例内容：
+
+```text
+server.name=HaoShortLink
+server.port=8080
+server.thread_num=4
+log.level=INFO
+```
+
+说明：
+
+- 空行和以 `#` 开头的整行注释会被忽略。
+- key 和 value 两侧空白会被裁剪。
+- 当前示例仅用于后续服务入口接入配置加载，不代表服务启动命令已经完成。
+
 待补充内容：
 
 - 服务启动命令。
-- 配置文件说明。
 - 常见故障排查。
 
 ## 构建验证

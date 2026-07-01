@@ -111,6 +111,26 @@ muduo_net
 - 在当前 VM 的 GCC 15 环境下，muduo 全量构建可能因 `muduo_http` 的 warning-as-error 失败。
 - 当前只安装和链接项目需要的核心库，后续如需其他 muduo 组件再单独决策。
 
+### 配置文件格式
+
+状态：暂定
+
+当前配置加载使用简单 `key=value` 文本格式：
+
+```text
+server.name=HaoShortLink
+server.port=8080
+server.thread_num=4
+log.level=INFO
+```
+
+说明：
+
+- 空行和以 `#` 开头的整行注释会被忽略。
+- key 和 value 两侧空白会被裁剪。
+- 当前不支持 YAML、TOML、JSON、环境变量覆盖或热加载。
+- 示例配置文件放在 `apps/shortlink_server/config/server.conf.example`。
+
 ## 待决策
 
 ### 短码生成策略
@@ -129,12 +149,6 @@ muduo_net
 状态：待决策
 
 当前暂不引入 `/api/v1`。后续如果需要兼容多个 API 版本，再重新评估。
-
-### 配置文件格式
-
-状态：待决策
-
-后续在配置加载任务中确定。
 
 ## 暂缓
 
