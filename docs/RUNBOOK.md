@@ -127,7 +127,7 @@ log.level=INFO
 
 ## 构建验证
 
-当前构建命令：
+日常挂载验证命令：
 
 ```bash
 ssh haoHTTP@orb
@@ -135,16 +135,25 @@ cmake -S /Users/hao/Code/haoHTTP -B /tmp/haoHTTP-build
 cmake --build /tmp/haoHTTP-build -j2
 ```
 
-当前结果：
+v0.2 干净克隆验证命令：
+
+```bash
+ssh haoHTTP@orb
+git clone --branch refactor/hao-shortlink-cleanup https://github.com/BeginAgainR/HaoShortLink.git /tmp/haoHTTP-clean-v0.2
+cmake -S /tmp/haoHTTP-clean-v0.2 -B /tmp/haoHTTP-clean-v0.2-build
+cmake --build /tmp/haoHTTP-clean-v0.2-build -j2
+```
+
+最近一次结果：
 
 ```text
 [100%] Built target shortlink_server
 ```
 
-输出文件：
+最近一次输出文件：
 
 ```text
-/tmp/haoHTTP-build/shortlink_server
+/tmp/haoHTTP-clean-v0.2-build/shortlink_server
 ```
 
 ## 当前文档任务验证
