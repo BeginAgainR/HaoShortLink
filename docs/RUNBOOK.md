@@ -321,6 +321,43 @@ HTTP/1.1 400 URL must start with http:// or https://
 v1.1 计划引入 MySQL 持久化和 Redis 查询缓存。实现前不提供可执行的 MySQL、Redis
 启动或验证命令。
 
+### 存储层抽象验证
+
+状态：已完成。
+
+验证内容：
+
+- `ShortLinkService` 依赖 repository 接口。
+- 当前默认 repository 仍为内存实现。
+- 不改变 V1 对外 API 和响应行为。
+
+最近一次结果：
+
+```text
+构建目录：/tmp/haoHTTP-build
+结果：[100%] Built target shortlink_server
+
+GET /api/health
+HTTP/1.1 200 OK
+{"status":"ok"}
+
+POST /api/short-links
+HTTP/1.1 201 Created
+{"code":"000001","short_url":"/s/000001","original_url":"https://example.com/repository"}
+
+GET /s/000001
+HTTP/1.1 302 Found
+Location: https://example.com/repository
+
+GET /s/notfound
+HTTP/1.1 404 Short link not found
+{"error":{"code":"short_link_not_found","message":"Short link not found"}}
+
+POST /api/short-links with invalid URL
+HTTP/1.1 400 URL must start with http:// or https://
+{"error":{"code":"invalid_url","message":"URL must start with http:// or https://"}}
+```
+
 后续验证项：
 
 - MySQL 表结构脚本可以在 Linux VM 中执行。

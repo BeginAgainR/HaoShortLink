@@ -1,4 +1,5 @@
 #include "http/HttpServer.h"
+#include "shortlink/MemoryShortLinkRepository.h"
 #include "shortlink/ShortLinkService.h"
 #include "utils/Config.h"
 #include "utils/JsonUtil.h"
@@ -286,7 +287,8 @@ int main(int argc, char* argv[])
              << " with " << config.threadNum << " worker threads";
 
     http::HttpServer server(config.port, config.name);
-    shortlink::ShortLinkService shortLinkService;
+    shortlink::MemoryShortLinkRepository shortLinkRepository;
+    shortlink::ShortLinkService shortLinkService(shortLinkRepository);
 
     server.setThreadNum(config.threadNum);
     server.Get("/api/health", handleHealth);
