@@ -284,27 +284,35 @@ HTTP/1.1 404 Short link not found
 {"error":{"code":"short_link_not_found","message":"Short link not found"}}
 ```
 
-干净拷贝验证：
+远端干净克隆验证：
 
 ```text
-路径：/tmp/haoHTTP-clean-current
-构建目录：/tmp/haoHTTP-clean-current-build
+分支：refactor/hao-shortlink-cleanup
+提交：d06d7c1
+路径：/tmp/haoHTTP-clean-v1.0-remote
+构建目录：/tmp/haoHTTP-clean-v1.0-remote-build
 结果：[100%] Built target shortlink_server
+
+GET /api/health
+HTTP/1.1 200 OK
+{"status":"ok"}
 
 POST /api/short-links
 HTTP/1.1 201 Created
-{"code":"000001","short_url":"/s/000001","original_url":"https://example.com/clean"}
+{"code":"000001","short_url":"/s/000001","original_url":"https://example.com/clean-v1"}
 
 GET /s/000001
 HTTP/1.1 302 Found
-Location: https://example.com/clean
+Location: https://example.com/clean-v1
+
+GET /s/notfound
+HTTP/1.1 404 Short link not found
+{"error":{"code":"short_link_not_found","message":"Short link not found"}}
+
+POST /api/short-links with invalid URL
+HTTP/1.1 400 URL must start with http:// or https://
+{"error":{"code":"invalid_url","message":"URL must start with http:// or https://"}}
 ```
-
-说明：
-
-- 当前改动尚未提交和推送，因此远端干净克隆暂时无法验证当前工作区内容。
-- 本次使用 `/tmp` 下的干净拷贝验证当前文件集合可以离开原仓库目录独立构建和运行。
-- 提交并推送后，仍建议补一次远端干净克隆验证。
 
 ## 当前文档任务验证
 
