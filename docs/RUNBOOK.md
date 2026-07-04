@@ -314,6 +314,23 @@ HTTP/1.1 400 URL must start with http:// or https://
 {"error":{"code":"invalid_url","message":"URL must start with http:// or https://"}}
 ```
 
+## v1.1 验证计划
+
+当前状态：尚未实现。
+
+v1.1 计划引入 MySQL 持久化和 Redis 查询缓存。实现前不提供可执行的 MySQL、Redis
+启动或验证命令。
+
+后续验证项：
+
+- MySQL 表结构脚本可以在 Linux VM 中执行。
+- 创建短链接后，MySQL 中存在对应记录。
+- 服务重启后，已创建短链接仍可跳转。
+- Redis 未命中时可以回源 MySQL。
+- Redis 命中时可以直接返回跳转。
+- Redis 不可用时不应把已有短链误判为不存在。
+- 远端干净克隆验证可以构建并跑通 v1.1 核心接口。
+
 ## 当前文档任务验证
 
 文档任务不需要运行构建命令。验证重点是：
