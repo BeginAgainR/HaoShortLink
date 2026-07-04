@@ -31,6 +31,43 @@ ID：
 
 已移除旧业务绝对路径。`FileUtil::resetDefaultFile()` 现在支持传入默认文件路径；未配置默认路径时不再回退到旧业务资源。
 
+## BUG-002：动态路由回调未传递路径参数
+
+状态：已修复
+范围：`HttpServer/`
+
+描述：
+
+`Router::route()` 在动态路由 callback 匹配成功后构造了带路径参数的 `newReq`，但实际调用
+callback 时传入的是原始 `req`。
+
+影响：
+
+使用 `addRoute()` 注册动态路由 callback 时，处理函数无法通过 `getPathParameters()` 读取路径参数。
+短码跳转接口 `GET /s/{code}` 需要读取短码参数，因此会受影响。
+
+下一步：
+
+已改为调用 `callback(newReq, resp)`，动态路由 callback 可以读取 `param1` 等路径参数。
+
+## BUG-003：请求重置时未清理请求体
+
+状态：已修复
+范围：`HttpServer/`
+
+描述：
+
+`HttpRequest::swap()` 未交换 `content_` 和 `contentLength_`。`HttpContext::reset()` 依赖
+`HttpRequest::swap()` 清理当前请求对象，因此在 keep-alive 连接复用场景下，请求体状态可能残留。
+
+影响：
+
+后续请求可能意外保留上一条请求的 body 或 content length，影响 POST 接口和请求解析状态的可靠性。
+
+下一步：
+
+已在 `HttpRequest::swap()` 中补充交换 `content_` 和 `contentLength_`。
+
 ## 不记录的内容
 
 - 没有复现或证据的猜测。
