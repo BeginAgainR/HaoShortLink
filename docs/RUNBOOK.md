@@ -156,6 +156,156 @@ cmake --build /tmp/haoHTTP-clean-v0.2-build -j2
 /tmp/haoHTTP-clean-v0.2-build/shortlink_server
 ```
 
+## v1.0 验证记录
+
+v1.0 实现过程中，每个可运行节点都应在 Linux VM 中验证，不在 Mac 宿主机上构建或运行。
+
+### 服务入口和健康检查
+
+状态：已完成。
+
+计划验证内容：
+
+- `cmake -S /Users/hao/Code/haoHTTP -B /tmp/haoHTTP-build`
+- `cmake --build /tmp/haoHTTP-build -j2`
+- 启动 `/tmp/haoHTTP-build/shortlink_server`
+- 使用 curl 请求 `GET /api/health`
+- 确认响应状态码为 200，响应体包含 `{"status":"ok"}`
+
+最近一次结果：
+
+```text
+[100%] Built target shortlink_server
+HTTP/1.1 200 OK
+{"status":"ok"}
+```
+
+### 创建短链接
+
+状态：已完成。
+
+计划验证内容：
+
+- 使用 curl 请求 `POST /api/short-links`
+- 请求体包含 `{"url":"https://example.com/very/long/path"}`
+- 确认响应状态码为 201
+- 确认响应体包含 `code`、`short_url` 和 `original_url`
+- 使用非法 JSON、缺失 `url` 和非法 URL 验证 400 JSON 错误
+
+最近一次结果：
+
+```text
+HTTP/1.1 201 Created
+{"code":"000001","short_url":"/s/000001","original_url":"https://example.com/very/long/path"}
+
+HTTP/1.1 400 URL must start with http:// or https://
+{"error":{"code":"invalid_url","message":"URL must start with http:// or https://"}}
+
+HTTP/1.1 400 Request body must contain a string url field
+{"error":{"code":"invalid_request","message":"Request body must contain a string url field"}}
+```
+
+### 内存版短链核心
+
+状态：已完成。
+
+最近一次结果：
+
+```text
+-- ShortLink Server sources: /Users/hao/Code/haoHTTP/apps/shortlink_server/src/ShortLinkService.cpp
+[100%] Built target shortlink_server
+```
+
+说明：
+
+- 当前只验证内存版核心参与编译。
+- 创建短链接和短码跳转 HTTP 接口已接入。
+
+### 短码跳转
+
+状态：已完成。
+
+计划验证内容：
+
+- 使用创建接口返回的 `short_url` 请求跳转路径
+- 确认响应状态码为 302
+- 确认 `Location` 指向原始 URL
+- 使用不存在的短码验证 404 JSON 错误
+
+最近一次结果：
+
+```text
+HTTP/1.1 302 Found
+Location: https://example.com/very/long/path
+
+HTTP/1.1 404 Short link not found
+{"error":{"code":"short_link_not_found","message":"Short link not found"}}
+```
+
+### v1.0 收口验证
+
+状态：已完成。
+
+验证内容：
+
+- 在 Linux VM 中进行最终构建验证。
+- 手工跑通健康检查、创建短链接、短码跳转。
+- 确认文档只声明 V1 内存版能力。
+- 确认 README 和 `docs/` 未声明 MySQL、Redis、Docker Compose、Nginx 等未实现能力。
+- 确认仓库内没有生成或提交 `build/` 目录。
+
+日常挂载目录最近一次结果：
+
+```text
+[100%] Built target shortlink_server
+
+GET /api/health
+HTTP/1.1 200 OK
+{"status":"ok"}
+
+POST /api/short-links
+HTTP/1.1 201 Created
+{"code":"000001","short_url":"/s/000001","original_url":"https://example.com/very/long/path"}
+
+GET /s/000001
+HTTP/1.1 302 Found
+Location: https://example.com/very/long/path
+
+POST /api/short-links with invalid JSON
+HTTP/1.1 400 Request body must contain a string url field
+{"error":{"code":"invalid_request","message":"Request body must contain a string url field"}}
+
+POST /api/short-links with invalid URL
+HTTP/1.1 400 URL must start with http:// or https://
+{"error":{"code":"invalid_url","message":"URL must start with http:// or https://"}}
+
+GET /s/notfound
+HTTP/1.1 404 Short link not found
+{"error":{"code":"short_link_not_found","message":"Short link not found"}}
+```
+
+干净拷贝验证：
+
+```text
+路径：/tmp/haoHTTP-clean-current
+构建目录：/tmp/haoHTTP-clean-current-build
+结果：[100%] Built target shortlink_server
+
+POST /api/short-links
+HTTP/1.1 201 Created
+{"code":"000001","short_url":"/s/000001","original_url":"https://example.com/clean"}
+
+GET /s/000001
+HTTP/1.1 302 Found
+Location: https://example.com/clean
+```
+
+说明：
+
+- 当前改动尚未提交和推送，因此远端干净克隆暂时无法验证当前工作区内容。
+- 本次使用 `/tmp` 下的干净拷贝验证当前文件集合可以离开原仓库目录独立构建和运行。
+- 提交并推送后，仍建议补一次远端干净克隆验证。
+
 ## 当前文档任务验证
 
 文档任务不需要运行构建命令。验证重点是：
