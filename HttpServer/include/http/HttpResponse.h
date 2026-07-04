@@ -16,6 +16,7 @@ public:
     {
         kUnknown,
         k200Ok = 200,
+        k201Created = 201,
         k204NoContent = 204,
         k301MovedPermanently = 301,
         k302Found = 302,
