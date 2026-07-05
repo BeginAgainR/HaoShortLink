@@ -112,13 +112,16 @@ server.name=HaoShortLink
 server.port=8080
 server.thread_num=4
 log.level=INFO
+storage.type=memory
 ```
 
 说明：
 
 - 空行和以 `#` 开头的整行注释会被忽略。
 - key 和 value 两侧空白会被裁剪。
-- 当前示例仅用于后续服务入口接入配置加载，不代表服务启动命令已经完成。
+- `storage.type` 当前支持 `memory` 和 `mysql`。
+- `memory` 是默认存储方式。
+- `mysql` 需要先创建 `short_links` 表并配置 MySQL 连接信息。
 
 待补充内容：
 
@@ -367,6 +370,36 @@ HTTP/1.1 400 URL must start with http:// or https://
 - Redis 命中时可以直接返回跳转。
 - Redis 不可用时不应把已有短链误判为不存在。
 - 远端干净克隆验证可以构建并跑通 v1.1 核心接口。
+
+### MySQL 表结构和创建持久化验证
+
+状态：代码已完成，待 MySQL 运行环境验证。
+
+已完成内容：
+
+- 新增 `apps/shortlink_server/sql/001_create_short_links.sql`。
+- 新增 MySQL repository 创建路径。
+- `storage.type=mysql` 时初始化 MySQL 连接池并使用 MySQL repository。
+- 创建短链接时计划写入 MySQL，通过自增 id 生成 Base62 短码并回写 `code`。
+
+最近一次已完成验证：
+
+```text
+构建目录：/tmp/haoHTTP-build
+结果：[100%] Built target shortlink_server
+
+storage.type=memory 回归：
+GET /api/health -> HTTP/1.1 200 OK
+POST /api/short-links -> HTTP/1.1 201 Created
+GET /s/000001 -> HTTP/1.1 302 Found
+```
+
+未完成验证：
+
+- 当前 VM 已安装 MySQL 开发库和 MySQL Connector/C++，但未安装 MySQL/MariaDB 服务端或客户端。
+- 尚未执行 SQL 脚本创建真实表。
+- 尚未用 `storage.type=mysql` 启动服务并验证真实插入 MySQL。
+- 尚未验证服务重启后从 MySQL 跳转，后续仍属于 MySQL 跳转查询批次。
 
 ## 当前文档任务验证
 

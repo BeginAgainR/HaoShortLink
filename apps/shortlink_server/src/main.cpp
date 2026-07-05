@@ -1,11 +1,14 @@
 #include "http/HttpServer.h"
 #include "shortlink/MemoryShortLinkRepository.h"
+#include "shortlink/MySqlShortLinkRepository.h"
 #include "shortlink/ShortLinkService.h"
 #include "utils/Config.h"
 #include "utils/JsonUtil.h"
+#include "utils/db/DbConnectionPool.h"
 
 #include <cctype>
 #include <iostream>
+#include <memory>
 #include <optional>
 #include <string>
 
@@ -19,6 +22,12 @@ struct ServerConfig
     std::string name = "HaoShortLink";
     int port = 8080;
     int threadNum = 4;
+    std::string storageType = "memory";
+    std::string mysqlHost = "tcp://127.0.0.1:3306";
+    std::string mysqlUser = "root";
+    std::string mysqlPassword;
+    std::string mysqlDatabase = "hao_shortlink";
+    int mysqlPoolSize = 4;
 };
 
 ServerConfig loadServerConfig(const std::string& configPath)
@@ -38,6 +47,12 @@ ServerConfig loadServerConfig(const std::string& configPath)
         serverConfig.name = config.getString("server.name", serverConfig.name);
         serverConfig.port = config.getInt("server.port", serverConfig.port);
         serverConfig.threadNum = config.getInt("server.thread_num", serverConfig.threadNum);
+        serverConfig.storageType = config.getString("storage.type", serverConfig.storageType);
+        serverConfig.mysqlHost = config.getString("mysql.host", serverConfig.mysqlHost);
+        serverConfig.mysqlUser = config.getString("mysql.user", serverConfig.mysqlUser);
+        serverConfig.mysqlPassword = config.getString("mysql.password", serverConfig.mysqlPassword);
+        serverConfig.mysqlDatabase = config.getString("mysql.database", serverConfig.mysqlDatabase);
+        serverConfig.mysqlPoolSize = config.getInt("mysql.pool_size", serverConfig.mysqlPoolSize);
     }
 
     if (serverConfig.port <= 0 || serverConfig.port > 65535)
@@ -50,6 +65,18 @@ ServerConfig loadServerConfig(const std::string& configPath)
     {
         std::cerr << "Invalid server.thread_num. Using default thread_num 4." << std::endl;
         serverConfig.threadNum = 4;
+    }
+
+    if (serverConfig.storageType != "memory" && serverConfig.storageType != "mysql")
+    {
+        std::cerr << "Invalid storage.type. Using memory storage." << std::endl;
+        serverConfig.storageType = "memory";
+    }
+
+    if (serverConfig.mysqlPoolSize <= 0)
+    {
+        std::cerr << "Invalid mysql.pool_size. Using default pool_size 4." << std::endl;
+        serverConfig.mysqlPoolSize = 4;
     }
 
     return serverConfig;
@@ -287,8 +314,22 @@ int main(int argc, char* argv[])
              << " with " << config.threadNum << " worker threads";
 
     http::HttpServer server(config.port, config.name);
-    shortlink::MemoryShortLinkRepository shortLinkRepository;
-    shortlink::ShortLinkService shortLinkService(shortLinkRepository);
+    std::unique_ptr<shortlink::ShortLinkRepository> shortLinkRepository;
+    if (config.storageType == "mysql")
+    {
+        http::db::DbConnectionPool::getInstance().init(config.mysqlHost,
+                                                       config.mysqlUser,
+                                                       config.mysqlPassword,
+                                                       config.mysqlDatabase,
+                                                       static_cast<std::size_t>(config.mysqlPoolSize));
+        shortLinkRepository = std::make_unique<shortlink::MySqlShortLinkRepository>();
+    }
+    else
+    {
+        shortLinkRepository = std::make_unique<shortlink::MemoryShortLinkRepository>();
+    }
+
+    shortlink::ShortLinkService shortLinkService(*shortLinkRepository);
 
     server.setThreadNum(config.threadNum);
     server.Get("/api/health", handleHealth);

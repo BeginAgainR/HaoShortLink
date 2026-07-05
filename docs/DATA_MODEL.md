@@ -58,7 +58,7 @@ v1.1 计划新增 `short_links` 表，作为短链映射的事实来源。
 ```sql
 CREATE TABLE short_links (
     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-    code VARCHAR(32) NOT NULL,
+    code VARCHAR(32) DEFAULT NULL,
     original_url TEXT NOT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -70,7 +70,7 @@ CREATE TABLE short_links (
 说明：
 
 - `id` 由 MySQL 自增生成，用于生成 Base62 短码。
-- `code` 保存最终短码，必须唯一。
+- `code` 保存最终短码，必须唯一；创建事务中允许临时为 `NULL`，用于先获取自增 id 再回写短码。
 - `original_url` 保存原始 URL，v1.1 不额外拆分域名或路径字段。
 - `created_at` 和 `updated_at` 用于基础审计和后续排查。
 - 暂不增加 `user_id`、`expires_at`、`status`、访问次数等字段。
@@ -83,8 +83,8 @@ v1.1 计划使用：
 MySQL AUTO_INCREMENT id -> Base62(code)
 ```
 
-创建短链时先让 MySQL 生成自增 id，再将 id 转换为 Base62 短码并写回 `code` 字段。
-这样服务重启后不会因为进程内计数器重置而重复生成已有短码。
+创建短链时先让 MySQL 生成自增 id，再将 id 转换为 Base62 短码并在同一事务中写回
+`code` 字段。这样服务重启后不会因为进程内计数器重置而重复生成已有短码。
 
 ### Redis 缓存
 
