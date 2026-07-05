@@ -72,6 +72,8 @@ public:
         }
     }
 
+    int executeRawUpdate(const std::string& sql);
+
     bool ping();  // 添加检测连接是否有效的方法
 private:
      // 辅助函数：递归终止条件

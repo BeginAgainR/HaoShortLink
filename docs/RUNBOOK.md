@@ -373,14 +373,26 @@ HTTP/1.1 400 URL must start with http:// or https://
 
 ### MySQL 表结构和创建持久化验证
 
-状态：代码已完成，待 MySQL 运行环境验证。
+状态：已完成。
 
 已完成内容：
 
 - 新增 `apps/shortlink_server/sql/001_create_short_links.sql`。
 - 新增 MySQL repository 创建路径。
 - `storage.type=mysql` 时初始化 MySQL 连接池并使用 MySQL repository。
-- 创建短链接时计划写入 MySQL，通过自增 id 生成 Base62 短码并回写 `code`。
+- 创建短链接时写入 MySQL，通过自增 id 生成 Base62 短码并回写 `code`。
+
+当前 VM 已安装：
+
+- `mysql-server`
+- `mysql-client`
+- MySQL 开发库和 MySQL Connector/C++
+
+当前 VM 已创建：
+
+- 数据库：`hao_shortlink`
+- 用户：`hao_shortlink`
+- 表：`short_links`
 
 最近一次已完成验证：
 
@@ -392,14 +404,20 @@ storage.type=memory 回归：
 GET /api/health -> HTTP/1.1 200 OK
 POST /api/short-links -> HTTP/1.1 201 Created
 GET /s/000001 -> HTTP/1.1 302 Found
+
+storage.type=mysql 验证：
+GET /api/health -> HTTP/1.1 200 OK
+POST /api/short-links -> HTTP/1.1 201 Created
+GET /s/000001 -> HTTP/1.1 302 Found
+
+MySQL 查询结果：
+1    000001    https://example.com/mysql-created
 ```
 
-未完成验证：
+说明：
 
-- 当前 VM 已安装 MySQL 开发库和 MySQL Connector/C++，但未安装 MySQL/MariaDB 服务端或客户端。
-- 尚未执行 SQL 脚本创建真实表。
-- 尚未用 `storage.type=mysql` 启动服务并验证真实插入 MySQL。
-- 尚未验证服务重启后从 MySQL 跳转，后续仍属于 MySQL 跳转查询批次。
+- MySQL 创建持久化路径已验证。
+- 服务重启后从 MySQL 跳转仍属于后续 MySQL 跳转查询批次。
 
 ## 当前文档任务验证
 

@@ -3,8 +3,11 @@
 #include "utils/db/DbConnectionPool.h"
 
 #include <algorithm>
+#include <exception>
 #include <memory>
 #include <stdexcept>
+
+#include <muduo/base/Logging.h>
 
 namespace shortlink
 {
@@ -21,11 +24,12 @@ constexpr std::size_t kMinCodeLength = 6;
 std::optional<ShortLinkRepository::ShortLinkRecord>
 MySqlShortLinkRepository::create(const std::string& originalUrl)
 {
-    auto conn = http::db::DbConnectionPool::getInstance().getConnection();
+    std::shared_ptr<http::db::DbConnection> conn;
 
     try
     {
-        conn->executeUpdate("START TRANSACTION");
+        conn = http::db::DbConnectionPool::getInstance().getConnection();
+        conn->executeRawUpdate("START TRANSACTION");
         conn->executeUpdate("INSERT INTO short_links (original_url) VALUES (?)", originalUrl);
 
         std::unique_ptr<sql::ResultSet> idResult(
@@ -42,21 +46,40 @@ MySqlShortLinkRepository::create(const std::string& originalUrl)
         conn->executeUpdate("UPDATE short_links SET code = ? WHERE id = ?",
                             code,
                             idString);
-        conn->executeUpdate("COMMIT");
+        conn->executeRawUpdate("COMMIT");
 
         return ShortLinkRecord {
             code,
             originalUrl
         };
     }
+    catch (const std::exception& e)
+    {
+        LOG_ERROR << "Failed to create short link in MySQL: " << e.what();
+        if (conn)
+        {
+            try
+            {
+                conn->executeRawUpdate("ROLLBACK");
+            }
+            catch (...)
+            {
+            }
+        }
+        throw;
+    }
     catch (...)
     {
-        try
+        LOG_ERROR << "Failed to create short link in MySQL: unknown error";
+        if (conn)
         {
-            conn->executeUpdate("ROLLBACK");
-        }
-        catch (...)
-        {
+            try
+            {
+                conn->executeRawUpdate("ROLLBACK");
+            }
+            catch (...)
+            {
+            }
         }
         throw;
     }

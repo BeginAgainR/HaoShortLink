@@ -72,6 +72,21 @@ bool DbConnection::ping()
     }
 }
 
+int DbConnection::executeRawUpdate(const std::string& sql)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    try
+    {
+        std::unique_ptr<sql::Statement> stmt(conn_->createStatement());
+        return stmt->executeUpdate(sql);
+    }
+    catch (const sql::SQLException& e)
+    {
+        LOG_ERROR << "Raw update failed: " << e.what() << ", SQL: " << sql;
+        throw DbException(e.what());
+    }
+}
+
 bool DbConnection::isValid() 
 {
     try 
