@@ -1,7 +1,7 @@
 # 运行手册
 
 状态：草案
-当前实现：当前阶段不在 Mac 宿主机上构建或运行。
+当前实现：已整理 Linux VM 手工构建、配置和运行方式；当前阶段不在 Mac 宿主机上构建或运行。
 
 ## 本地 Mac 宿主机
 
@@ -120,15 +120,175 @@ redis.enabled=false
 
 - 空行和以 `#` 开头的整行注释会被忽略。
 - key 和 value 两侧空白会被裁剪。
+- 服务启动时可以传入配置文件路径；未传入时默认读取示例配置文件。
 - `storage.type` 当前支持 `memory` 和 `mysql`。
 - `memory` 是默认存储方式。
 - `mysql` 需要先创建 `short_links` 表并配置 MySQL 连接信息。
 - `redis.enabled` 是 MySQL 存储模式下的可选查询缓存开关，默认关闭。
 
-待补充内容：
+建议：
 
-- 服务启动命令。
-- 常见故障排查。
+- 本地调试时可以复制示例文件为临时配置文件，并按环境修改数据库密码等敏感信息。
+- 不要把包含真实密码的个人配置提交到仓库。
+- Docker Compose、Nginx 和线上配置模板尚未接入。
+
+## 服务启动
+
+服务二进制由 Linux VM 中的构建目录产生。日常使用挂载目录构建时，默认路径为：
+
+```text
+/tmp/haoHTTP-build/shortlink_server
+```
+
+### 内存存储模式
+
+内存模式适合快速验证 HTTP 服务和短链 API，不依赖 MySQL 或 Redis。进程重启后短链数据会丢失。
+
+配置要点：
+
+```text
+storage.type=memory
+redis.enabled=false
+```
+
+启动命令：
+
+```bash
+ssh haoHTTP@orb
+cd /Users/hao/Code/haoHTTP
+/tmp/haoHTTP-build/shortlink_server apps/shortlink_server/config/server.conf.example
+```
+
+### MySQL 持久化模式
+
+MySQL 模式用于验证短链数据持久化。MySQL 是短链数据的事实来源。
+
+配置要点：
+
+```text
+storage.type=mysql
+mysql.host=tcp://127.0.0.1:3306
+mysql.user=hao_shortlink
+mysql.password=change_me
+mysql.database=hao_shortlink
+mysql.pool_size=4
+redis.enabled=false
+```
+
+数据库初始化脚本：
+
+```text
+apps/shortlink_server/sql/001_create_short_links.sql
+```
+
+初始化表结构示例：
+
+```bash
+ssh haoHTTP@orb
+mysql -u hao_shortlink -p hao_shortlink < /Users/hao/Code/haoHTTP/apps/shortlink_server/sql/001_create_short_links.sql
+```
+
+启动命令：
+
+```bash
+ssh haoHTTP@orb
+cd /Users/hao/Code/haoHTTP
+/tmp/haoHTTP-build/shortlink_server /path/to/local-server.conf
+```
+
+### MySQL + Redis 查询缓存模式
+
+Redis 只作为短码跳转查询缓存，不承担短链事实存储。Redis 不可用时，服务应继续回源 MySQL。
+
+配置要点：
+
+```text
+storage.type=mysql
+redis.enabled=true
+redis.host=127.0.0.1
+redis.port=6379
+redis.database=0
+redis.ttl_seconds=3600
+redis.key_prefix=shortlink:
+```
+
+启动命令与 MySQL 模式相同，区别只在配置文件。
+
+## 手工接口验证
+
+以下命令在 Linux VM 中执行，服务默认监听 `8080` 端口。
+
+健康检查：
+
+```bash
+curl -i http://127.0.0.1:8080/api/health
+```
+
+创建短链接：
+
+```bash
+curl -i \
+  -H 'Content-Type: application/json' \
+  -d '{"url":"https://example.com/very/long/path"}' \
+  http://127.0.0.1:8080/api/short-links
+```
+
+短码跳转：
+
+```bash
+curl -i http://127.0.0.1:8080/s/000001
+```
+
+不存在短码：
+
+```bash
+curl -i http://127.0.0.1:8080/s/notfound
+```
+
+非法 URL：
+
+```bash
+curl -i \
+  -H 'Content-Type: application/json' \
+  -d '{"url":"ftp://example.com/file"}' \
+  http://127.0.0.1:8080/api/short-links
+```
+
+## 常见故障排查
+
+### 服务启动后接口无法访问
+
+检查项：
+
+- 服务是否在 Linux VM 中启动，而不是 Mac 宿主机。
+- 配置中的 `server.port` 是否为预期端口。
+- 端口是否被已有进程占用。
+- curl 是否请求 `127.0.0.1` 和正确端口。
+
+### MySQL 模式创建短链失败
+
+检查项：
+
+- `storage.type` 是否为 `mysql`。
+- MySQL 服务是否启动。
+- `mysql.host`、`mysql.user`、`mysql.password`、`mysql.database` 是否和本地环境一致。
+- 是否已经执行 `001_create_short_links.sql`。
+- 用户是否有 `SELECT`、`INSERT`、`UPDATE` 权限。
+
+### Redis 开启后跳转变慢或日志报错
+
+检查项：
+
+- Redis 服务是否启动。
+- `redis.host`、`redis.port`、`redis.database` 是否正确。
+- Redis 只是查询缓存；如果 MySQL 可用，Redis 连接失败不应导致已有短链返回 404。
+
+### 短链重启后丢失
+
+检查项：
+
+- 如果使用 `storage.type=memory`，这是预期行为。
+- 需要重启后仍可跳转时，使用 `storage.type=mysql`。
 
 ## 构建验证
 
@@ -140,25 +300,25 @@ cmake -S /Users/hao/Code/haoHTTP -B /tmp/haoHTTP-build
 cmake --build /tmp/haoHTTP-build -j2
 ```
 
-v0.2 干净克隆验证命令：
+干净克隆验证命令示例：
 
 ```bash
 ssh haoHTTP@orb
-git clone --branch refactor/hao-shortlink-cleanup https://github.com/BeginAgainR/HaoShortLink.git /tmp/haoHTTP-clean-v0.2
-cmake -S /tmp/haoHTTP-clean-v0.2 -B /tmp/haoHTTP-clean-v0.2-build
-cmake --build /tmp/haoHTTP-clean-v0.2-build -j2
+git clone --branch refactor/hao-shortlink-cleanup https://github.com/BeginAgainR/HaoShortLink.git /tmp/haoHTTP-clean-check
+cmake -S /tmp/haoHTTP-clean-check -B /tmp/haoHTTP-clean-check-build
+cmake --build /tmp/haoHTTP-clean-check-build -j2
 ```
 
-最近一次结果：
+最近一次 v1.1 干净克隆验证结果：
 
 ```text
 [100%] Built target shortlink_server
 ```
 
-最近一次输出文件：
+最近一次 v1.1 输出文件：
 
 ```text
-/tmp/haoHTTP-clean-v0.2-build/shortlink_server
+/tmp/haoHTTP-clean-v1.1-final-build/shortlink_server
 ```
 
 ## v1.0 验证记录
