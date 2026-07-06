@@ -319,10 +319,9 @@ HTTP/1.1 400 URL must start with http:// or https://
 
 ## v1.1 验证计划
 
-当前状态：尚未实现。
+当前状态：进行中。
 
-v1.1 计划引入 MySQL 持久化和 Redis 查询缓存。实现前不提供可执行的 MySQL、Redis
-启动或验证命令。
+v1.1 计划引入 MySQL 持久化和 Redis 查询缓存。相关启动和验证命令按实现批次逐步补充。
 
 ### 存储层抽象验证
 
@@ -417,7 +416,37 @@ MySQL 查询结果：
 说明：
 
 - MySQL 创建持久化路径已验证。
-- 服务重启后从 MySQL 跳转仍属于后续 MySQL 跳转查询批次。
+- 服务重启后从 MySQL 跳转已验证。
+
+### MySQL 跳转查询验证
+
+状态：已完成。
+
+验证内容：
+
+- `storage.type=mysql` 时，短码跳转从 MySQL 查询原始 URL。
+- 服务重启后，进程内状态清空，已创建短链仍可跳转。
+- 不存在的短码仍返回 404。
+
+最近一次已完成验证：
+
+```text
+构建目录：/tmp/haoHTTP-build
+结果：[100%] Built target shortlink_server
+
+GET /api/health -> HTTP/1.1 200 OK
+POST /api/short-links -> HTTP/1.1 201 Created
+创建短码：000001
+
+MySQL 查询结果：
+1    000001    https://example.com/mysql-restart
+
+重启服务后：
+GET /s/000001 -> HTTP/1.1 302 Found
+Location: https://example.com/mysql-restart
+
+GET /s/notfound -> HTTP/1.1 404 Short link not found
+```
 
 ## 当前文档任务验证
 
