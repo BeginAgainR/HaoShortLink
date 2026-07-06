@@ -321,9 +321,9 @@ HTTP/1.1 400 URL must start with http:// or https://
 
 ## v1.1 验证计划
 
-当前状态：进行中。
+当前状态：已完成。
 
-v1.1 计划引入 MySQL 持久化和 Redis 查询缓存。相关启动和验证命令按实现批次逐步补充。
+v1.1 已引入 MySQL 持久化和 Redis 查询缓存。MySQL 是事实来源，Redis 只作为短码跳转查询缓存。
 
 ### 存储层抽象验证
 
@@ -362,7 +362,7 @@ HTTP/1.1 400 URL must start with http:// or https://
 {"error":{"code":"invalid_url","message":"URL must start with http:// or https://"}}
 ```
 
-后续验证项：
+已完成验证项：
 
 - MySQL 表结构脚本可以在 Linux VM 中执行。
 - 创建短链接后，MySQL 中存在对应记录。
@@ -493,6 +493,46 @@ Location: https://example.com/redis-cache
 Redis 端口不可用时验证 MySQL 回退：
 GET /s/000001 -> HTTP/1.1 302 Found
 Location: https://example.com/redis-cache
+```
+
+### v1.1 最终收口验证
+
+状态：已完成。
+
+验证内容：
+
+- Linux VM 挂载目录构建。
+- MySQL + Redis 模式健康检查。
+- 创建短链接后写入 MySQL。
+- Redis 首次未命中后回源 MySQL 并回填 Redis。
+- 短码跳转返回 302。
+- 不存在短码返回 404。
+- 非法 URL 返回 400。
+
+最近一次已完成验证：
+
+```text
+构建目录：/tmp/haoHTTP-build
+结果：[100%] Built target shortlink_server
+
+GET /api/health -> HTTP/1.1 200 OK
+POST /api/short-links -> HTTP/1.1 201 Created
+创建短码：000001
+
+MySQL 查询结果：
+1    000001    https://example.com/v1.1-final
+
+第一次跳转前 Redis：
+GET shortlink:000001 -> <nil>
+
+GET /s/000001 -> HTTP/1.1 302 Found
+Location: https://example.com/v1.1-final
+
+第一次跳转后 Redis：
+GET shortlink:000001 -> https://example.com/v1.1-final
+
+GET /s/notfound -> HTTP/1.1 404 Short link not found
+POST /api/short-links with invalid URL -> HTTP/1.1 400 URL must start with http:// or https://
 ```
 
 ## 当前文档任务验证

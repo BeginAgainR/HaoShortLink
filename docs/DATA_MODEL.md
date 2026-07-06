@@ -47,16 +47,16 @@ v1.1 计划先只持久化短链映射本身，不引入用户归属、访问统
 
 当前状态：用户系统暂缓，不属于 V1，也不属于 v1.1。
 
-## v1.1 持久化草案
+## v1.1 持久化模型
 
 ### MySQL 表
 
 v1.1 新增 `short_links` 表，作为短链映射的事实来源。
 
-字段草案：
+当前表结构：
 
 ```sql
-CREATE TABLE short_links (
+CREATE TABLE IF NOT EXISTS short_links (
     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     code VARCHAR(32) DEFAULT NULL,
     original_url TEXT NOT NULL,
@@ -64,7 +64,7 @@ CREATE TABLE short_links (
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (id),
     UNIQUE KEY uk_short_links_code (code)
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 ```
 
 说明：
