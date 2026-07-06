@@ -535,6 +535,16 @@ GET /s/notfound -> HTTP/1.1 404 Short link not found
 POST /api/short-links with invalid URL -> HTTP/1.1 400 URL must start with http:// or https://
 ```
 
+远端干净克隆验证：
+
+```text
+分支：refactor/hao-shortlink-cleanup
+提交：4a53281
+路径：/tmp/haoHTTP-clean-v1.1-final
+构建目录：/tmp/haoHTTP-clean-v1.1-final-build
+结果：[100%] Built target shortlink_server
+```
+
 ## 当前文档任务验证
 
 文档任务不需要运行构建命令。验证重点是：

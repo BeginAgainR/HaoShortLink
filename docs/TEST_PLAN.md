@@ -12,16 +12,16 @@
 - 确认项目在 Linux 环境中可构建。
 - 防止基础编译错误进入后续任务。
 
-当前状态：已通过 Linux VM 构建验证和 v0.2 干净克隆验证。
+当前状态：已通过 Linux VM 构建验证和 v1.1 干净克隆验证。
 
 最近一次验证：
 
 - 环境：OrbStack Linux VM `haoHTTP`
 - 类型：干净克隆验证
 - 分支：`refactor/hao-shortlink-cleanup`
-- 提交：`6ccb56d`
-- 项目路径：`/tmp/haoHTTP-clean-v0.2`
-- 构建目录：`/tmp/haoHTTP-clean-v0.2-build`
+- 提交：`4a53281`
+- 项目路径：`/tmp/haoHTTP-clean-v1.1-final`
+- 构建目录：`/tmp/haoHTTP-clean-v1.1-final-build`
 - 结果：`[100%] Built target shortlink_server`
 
 触发条件：
