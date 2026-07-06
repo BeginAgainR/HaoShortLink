@@ -32,7 +32,7 @@
 当前 VM 已安装：
 
 - 基础构建工具：`build-essential`、`cmake`、`git`、`pkg-config`
-- 开发依赖：`libssl-dev`、`libmysqlclient-dev`、`libmysqlcppconn-dev`
+- 开发依赖：`libssl-dev`、`libmysqlclient-dev`、`libmysqlcppconn-dev`、`libhiredis-dev`
 - muduo 核心库：`muduo_base`、`muduo_net`
 
 本地 muduo 安装位置：
@@ -113,6 +113,7 @@ server.port=8080
 server.thread_num=4
 log.level=INFO
 storage.type=memory
+redis.enabled=false
 ```
 
 说明：
@@ -122,6 +123,7 @@ storage.type=memory
 - `storage.type` 当前支持 `memory` 和 `mysql`。
 - `memory` 是默认存储方式。
 - `mysql` 需要先创建 `short_links` 表并配置 MySQL 连接信息。
+- `redis.enabled` 是 MySQL 存储模式下的可选查询缓存开关，默认关闭。
 
 待补充内容：
 
@@ -386,6 +388,9 @@ HTTP/1.1 400 URL must start with http:// or https://
 - `mysql-server`
 - `mysql-client`
 - MySQL 开发库和 MySQL Connector/C++
+- `redis-server`
+- `redis-tools`
+- `libhiredis-dev`
 
 当前 VM 已创建：
 
@@ -446,6 +451,48 @@ GET /s/000001 -> HTTP/1.1 302 Found
 Location: https://example.com/mysql-restart
 
 GET /s/notfound -> HTTP/1.1 404 Short link not found
+```
+
+### Redis 查询缓存验证
+
+状态：已完成。
+
+已完成内容：
+
+- 新增 Redis 查询缓存组件。
+- 新增 Redis 缓存包装 repository。
+- `storage.type=mysql` 且 `redis.enabled=true` 时，短码跳转先查 Redis。
+- Redis 未命中时回源 MySQL，MySQL 命中后回填 Redis。
+- Redis 不可用时继续回源 MySQL，不直接改变为 404。
+- `storage.type=memory` 时忽略 Redis 开关。
+
+最近一次已完成验证：
+
+```text
+构建目录：/tmp/haoHTTP-build
+结果：[100%] Built target shortlink_server
+
+GET /api/health -> HTTP/1.1 200 OK
+POST /api/short-links -> HTTP/1.1 201 Created
+创建短码：000001
+
+第一次跳转前 Redis：
+GET shortlink:000001 -> <nil>
+
+第一次跳转：
+GET /s/000001 -> HTTP/1.1 302 Found
+Location: https://example.com/redis-cache
+
+第一次跳转后 Redis：
+GET shortlink:000001 -> https://example.com/redis-cache
+
+MySQL 临时停止后验证 Redis 命中：
+GET /s/000001 -> HTTP/1.1 302 Found
+Location: https://example.com/redis-cache
+
+Redis 端口不可用时验证 MySQL 回退：
+GET /s/000001 -> HTTP/1.1 302 Found
+Location: https://example.com/redis-cache
 ```
 
 ## 当前文档任务验证

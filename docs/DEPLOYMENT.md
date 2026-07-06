@@ -5,8 +5,8 @@
 
 ## 说明
 
-本文档用于后续记录 HaoShortLink 的部署方式。当前项目尚未接入 Docker Compose、Nginx、
-MySQL 或 Redis，因此本文档不提供可执行的部署步骤。
+本文档用于后续记录 HaoShortLink 的部署方式。当前项目已接入 MySQL 和可选 Redis 查询缓存，
+但尚未接入 Docker Compose 或 Nginx，因此本文档暂不提供完整部署步骤。
 
 ## 后续内容
 
@@ -27,6 +27,5 @@ MySQL 或 Redis，因此本文档不提供可执行的部署步骤。
 
 - 容器化部署。
 - Nginx 接入。
-- MySQL 接入。
-- Redis 接入。
+- Redis 限流。
 - 线上运行方案。

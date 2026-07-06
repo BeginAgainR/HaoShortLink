@@ -5,6 +5,12 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(OpenSSL REQUIRED)
+find_path(HIREDIS_INCLUDE_DIR hiredis/hiredis.h)
+find_library(HIREDIS_LIBRARY hiredis)
+
+if (NOT HIREDIS_INCLUDE_DIR OR NOT HIREDIS_LIBRARY)
+    message(FATAL_ERROR "hiredis development files are required")
+endif()
 
 include_directories(
     ${PROJECT_SOURCE_DIR}
@@ -12,6 +18,7 @@ include_directories(
     ${PROJECT_SOURCE_DIR}/apps/shortlink_server/include
     /usr/include/mysql-cppconn-8
     /usr/include/mysql
+    ${HIREDIS_INCLUDE_DIR}
     ${OPENSSL_INCLUDE_DIR}
 )
 
@@ -40,6 +47,7 @@ target_link_libraries(shortlink_server
     muduo_base
     mysqlcppconn
     mysqlclient
+    ${HIREDIS_LIBRARY}
     ssl
     crypto
 )

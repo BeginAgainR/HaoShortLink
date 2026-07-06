@@ -1,6 +1,8 @@
 #include "http/HttpServer.h"
 #include "shortlink/MemoryShortLinkRepository.h"
 #include "shortlink/MySqlShortLinkRepository.h"
+#include "shortlink/RedisCachedShortLinkRepository.h"
+#include "shortlink/RedisShortLinkCache.h"
 #include "shortlink/ShortLinkService.h"
 #include "utils/Config.h"
 #include "utils/JsonUtil.h"
@@ -28,6 +30,12 @@ struct ServerConfig
     std::string mysqlPassword;
     std::string mysqlDatabase = "hao_shortlink";
     int mysqlPoolSize = 4;
+    bool redisEnabled = false;
+    std::string redisHost = "127.0.0.1";
+    int redisPort = 6379;
+    int redisDatabase = 0;
+    int redisTtlSeconds = 3600;
+    std::string redisKeyPrefix = "shortlink:";
 };
 
 ServerConfig loadServerConfig(const std::string& configPath)
@@ -53,6 +61,12 @@ ServerConfig loadServerConfig(const std::string& configPath)
         serverConfig.mysqlPassword = config.getString("mysql.password", serverConfig.mysqlPassword);
         serverConfig.mysqlDatabase = config.getString("mysql.database", serverConfig.mysqlDatabase);
         serverConfig.mysqlPoolSize = config.getInt("mysql.pool_size", serverConfig.mysqlPoolSize);
+        serverConfig.redisEnabled = config.getBool("redis.enabled", serverConfig.redisEnabled);
+        serverConfig.redisHost = config.getString("redis.host", serverConfig.redisHost);
+        serverConfig.redisPort = config.getInt("redis.port", serverConfig.redisPort);
+        serverConfig.redisDatabase = config.getInt("redis.database", serverConfig.redisDatabase);
+        serverConfig.redisTtlSeconds = config.getInt("redis.ttl_seconds", serverConfig.redisTtlSeconds);
+        serverConfig.redisKeyPrefix = config.getString("redis.key_prefix", serverConfig.redisKeyPrefix);
     }
 
     if (serverConfig.port <= 0 || serverConfig.port > 65535)
@@ -77,6 +91,24 @@ ServerConfig loadServerConfig(const std::string& configPath)
     {
         std::cerr << "Invalid mysql.pool_size. Using default pool_size 4." << std::endl;
         serverConfig.mysqlPoolSize = 4;
+    }
+
+    if (serverConfig.redisPort <= 0 || serverConfig.redisPort > 65535)
+    {
+        std::cerr << "Invalid redis.port. Using default port 6379." << std::endl;
+        serverConfig.redisPort = 6379;
+    }
+
+    if (serverConfig.redisDatabase < 0)
+    {
+        std::cerr << "Invalid redis.database. Using default database 0." << std::endl;
+        serverConfig.redisDatabase = 0;
+    }
+
+    if (serverConfig.redisTtlSeconds < 0)
+    {
+        std::cerr << "Invalid redis.ttl_seconds. Using default ttl_seconds 3600." << std::endl;
+        serverConfig.redisTtlSeconds = 3600;
     }
 
     return serverConfig;
@@ -314,6 +346,7 @@ int main(int argc, char* argv[])
              << " with " << config.threadNum << " worker threads";
 
     http::HttpServer server(config.port, config.name);
+    std::unique_ptr<shortlink::ShortLinkRepository> primaryShortLinkRepository;
     std::unique_ptr<shortlink::ShortLinkRepository> shortLinkRepository;
     if (config.storageType == "mysql")
     {
@@ -322,10 +355,30 @@ int main(int argc, char* argv[])
                                                        config.mysqlPassword,
                                                        config.mysqlDatabase,
                                                        static_cast<std::size_t>(config.mysqlPoolSize));
-        shortLinkRepository = std::make_unique<shortlink::MySqlShortLinkRepository>();
+        primaryShortLinkRepository = std::make_unique<shortlink::MySqlShortLinkRepository>();
+        if (config.redisEnabled)
+        {
+            shortlink::RedisShortLinkCache::Config redisConfig;
+            redisConfig.host = config.redisHost;
+            redisConfig.port = config.redisPort;
+            redisConfig.database = config.redisDatabase;
+            redisConfig.ttlSeconds = config.redisTtlSeconds;
+            redisConfig.keyPrefix = config.redisKeyPrefix;
+            shortLinkRepository = std::make_unique<shortlink::RedisCachedShortLinkRepository>(
+                *primaryShortLinkRepository,
+                shortlink::RedisShortLinkCache(redisConfig));
+        }
+        else
+        {
+            shortLinkRepository = std::move(primaryShortLinkRepository);
+        }
     }
     else
     {
+        if (config.redisEnabled)
+        {
+            LOG_INFO << "redis.enabled is ignored when storage.type is not mysql";
+        }
         shortLinkRepository = std::make_unique<shortlink::MemoryShortLinkRepository>();
     }
 
