@@ -134,7 +134,8 @@ redis.enabled=false
 - 不要把包含真实密码的个人配置提交到仓库。
 - `server.compose.conf.example` 用于 `shortlink_server` 在 `haoHTTP` VM 中运行、连接仓库根目录 `compose.yaml` 启动的 MySQL 和 Redis。
 - `server.container.conf.example` 用于 `shortlink_server` 在 Docker Compose 容器内运行、通过服务名连接 MySQL 和 Redis。
-- Nginx 和线上配置模板尚未接入。
+- Nginx 本地反向代理配置位于 `deploy/nginx/default.conf`。
+- 线上配置模板尚未接入。
 
 ## Docker Compose 本地运行
 
@@ -143,15 +144,16 @@ redis.enabled=false
 - MySQL
 - Redis
 - `shortlink_server`
+- Nginx
 
 当前不编排：
 
-- Nginx
 - CI 或压测环境
 
 运行位置：
 
-- MySQL、Redis 和 `shortlink_server` 容器运行在 OrbStack Docker 中。
+- MySQL、Redis、`shortlink_server` 和 Nginx 容器运行在 OrbStack Docker 中。
+- Nginx 容器通过 Compose 服务名 `shortlink_server` 访问业务服务。
 - `shortlink_server` 容器通过 Compose 服务名 `mysql`、`redis` 访问依赖。
 - 如果在 `haoHTTP` VM 中手工运行 `shortlink_server`，访问 OrbStack Docker 发布端口时使用 `docker.orb.internal`。
 - 不需要在 `haoHTTP` Linux VM 内安装 Docker。
@@ -159,6 +161,7 @@ redis.enabled=false
 端口约定：
 
 ```text
+Nginx 容器端口 80 -> OrbStack Docker 发布端口 8080
 shortlink_server 容器端口 8080 -> OrbStack Docker 发布端口 18080
 MySQL 容器端口 3306 -> OrbStack Docker 发布端口 13306
 Redis 容器端口 6379 -> OrbStack Docker 发布端口 16379
@@ -166,7 +169,9 @@ Redis 容器端口 6379 -> OrbStack Docker 发布端口 16379
 
 说明：
 
-- 使用 `18080`、`13306` 和 `16379` 是为了避免和本地已有服务默认端口冲突。
+- 使用 `8080` 作为 Nginx 本地统一 HTTP 入口。
+- `18080` 保留为 `shortlink_server` 直连调试入口。
+- 使用 `13306` 和 `16379` 是为了避免和本地已有 MySQL、Redis 默认端口冲突。
 - MySQL 容器第一次初始化空数据目录时，会执行 `apps/shortlink_server/sql/001_create_short_links.sql`。
 - 如果 MySQL 数据卷已经存在，初始化 SQL 不会重复执行。
 - 开发环境用户名、密码和数据库名以 `compose.yaml` 为准。
@@ -182,6 +187,7 @@ docker compose up -d --build
 
 ```bash
 SHORTLINK_SERVER_BASE_IMAGE=docker.m.daocloud.io/library/ubuntu:22.04 \
+SHORTLINK_NGINX_IMAGE=docker.m.daocloud.io/library/nginx:alpine \
 SHORTLINK_MYSQL_IMAGE=docker.m.daocloud.io/library/mysql:8.0 \
 SHORTLINK_REDIS_IMAGE=docker.m.daocloud.io/library/redis:7-alpine \
 docker compose up -d --build
@@ -212,26 +218,33 @@ docker compose ps
 docker compose logs mysql
 docker compose logs redis
 docker compose logs shortlink_server
+docker compose logs nginx
 ```
 
-验证服务健康检查：
+通过 Nginx 验证服务健康检查：
 
 ```bash
-curl -i http://127.0.0.1:18080/api/health
+curl -i http://127.0.0.1:8080/api/health
 ```
 
-验证创建短链接：
+通过 Nginx 验证创建短链接：
 
 ```bash
-curl -i -X POST http://127.0.0.1:18080/api/short-links \
+curl -i -X POST http://127.0.0.1:8080/api/short-links \
   -H 'Content-Type: application/json' \
   -d '{"url":"https://example.com/compose-container"}'
 ```
 
-验证短码跳转：
+通过 Nginx 验证短码跳转：
 
 ```bash
-curl -i http://127.0.0.1:18080/s/000001
+curl -i http://127.0.0.1:8080/s/000001
+```
+
+如果需要绕过 Nginx 直连业务服务调试：
+
+```bash
+curl -i http://127.0.0.1:18080/api/health
 ```
 
 验证 MySQL 表结构：
@@ -997,6 +1010,69 @@ HTTP/1.1 404 Short link not found
 
 POST /api/short-links with invalid URL：
 HTTP/1.1 400 URL must start with http:// or https://
+```
+
+### Nginx Docker Compose 反向代理验证
+
+状态：已完成。
+
+验证日期：
+
+```text
+2026-07-07
+```
+
+验证内容：
+
+- 使用 `deploy/nginx/default.conf` 作为 Nginx 配置。
+- Nginx 容器监听内部 80 端口，对外发布 `127.0.0.1:8080`。
+- Nginx 通过 Compose 服务名 `shortlink_server:8080` 转发请求。
+- `/api/` 和 `/s/` 路径经 Nginx 转发到 `shortlink_server`。
+- `/` 路径由 Nginx 返回 404 JSON。
+- 经 Nginx 跑通健康检查、创建短链接、短码跳转、Redis 回填和 MySQL 查询。
+
+最近一次结果：
+
+```text
+Nginx 配置检查：
+nginx: configuration file /etc/nginx/nginx.conf test is successful
+
+Docker Compose：
+hao-shortlink-nginx -> Up (healthy), 0.0.0.0:8080->80/tcp
+hao-shortlink-server -> Up (healthy), 0.0.0.0:18080->8080/tcp
+hao-shortlink-mysql -> Up (healthy), 0.0.0.0:13306->3306/tcp
+hao-shortlink-redis -> Up (healthy), 0.0.0.0:16379->6379/tcp
+
+GET /api/health via Nginx：
+HTTP/1.1 200 OK
+Server: nginx/1.31.2
+{"status":"ok"}
+
+POST /api/short-links via Nginx：
+HTTP/1.1 201 Created
+Server: nginx/1.31.2
+{"code":"000003","short_url":"/s/000003","original_url":"https://example.com/nginx-proxy"}
+
+GET /s/000003 via Nginx：
+HTTP/1.1 302 Found
+Server: nginx/1.31.2
+Location: https://example.com/nginx-proxy
+
+Redis 回填：
+GET shortlink:000003 -> https://example.com/nginx-proxy
+
+MySQL 查询：
+3    000003    https://example.com/nginx-proxy
+
+GET /s/notfound via Nginx：
+HTTP/1.1 404 Short link not found
+
+POST /api/short-links with invalid URL via Nginx：
+HTTP/1.1 400 URL must start with http:// or https://
+
+GET / via Nginx：
+HTTP/1.1 404 Not Found
+{"error":{"code":"not_found","message":"Not Found"}}
 ```
 
 ## 当前文档任务验证
