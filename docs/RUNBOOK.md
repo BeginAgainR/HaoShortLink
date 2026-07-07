@@ -82,7 +82,7 @@ cd /Users/hao/Code/haoHTTP
 
 ### 干净克隆验证
 
-阶段性验证可以使用从远端仓库重新克隆的方式。
+阶段性验证可以使用从远端仓库重新克隆，或从已提交的本地仓库重新克隆的方式。
 
 适用场景：
 
@@ -92,7 +92,7 @@ cd /Users/hao/Code/haoHTTP
 - 准备合并分支、发布版本或做最终确认前。
 - 怀疑当前工作区依赖了未提交文件时。
 
-干净克隆验证更接近 CI，因为它从远端仓库拉取代码，可以发现漏提交文件、本地隐藏依赖和
+干净克隆验证更接近 CI，因为它从远端或已提交仓库重新拉取代码，可以发现漏提交文件、本地隐藏依赖和
 `.gitignore` 配置问题。
 
 ## 配置文件
@@ -1074,6 +1074,89 @@ GET / via Nginx：
 HTTP/1.1 404 Not Found
 {"error":{"code":"not_found","message":"Not Found"}}
 ```
+
+### v1.2 本地干净克隆 Compose 验证
+
+状态：已完成。
+
+验证日期：
+
+```text
+2026-07-07
+```
+
+验证内容：
+
+- 从已提交的本地仓库克隆到 `/tmp/haoHTTP-clean-v1.2-final`。
+- 克隆提交为 `ce3f605`。
+- 使用临时 Compose override 修改容器名和宿主机端口，避免和当前开发栈冲突。
+- 从干净源码构建 `hao-shortlink-server:v1.2-clean`。
+- 创建独立 Docker network 和独立 MySQL/Redis 数据卷。
+- 经 Nginx 跑通健康检查、创建短链接、短码跳转、Redis 回填、MySQL 查询、404 和非法 URL。
+- 验证完成后停止并删除临时验证栈和临时数据卷。
+
+临时端口：
+
+```text
+Nginx: 28080 -> 80
+shortlink_server: 28081 -> 8080
+MySQL: 23306 -> 3306
+Redis: 26379 -> 6379
+```
+
+最近一次结果：
+
+```text
+干净克隆：
+/tmp/haoHTTP-clean-v1.2-final
+提交：ce3f605 chore: add nginx reverse proxy
+
+Docker Compose：
+hao-shortlink-clean-nginx -> Up (healthy), 0.0.0.0:28080->80/tcp
+hao-shortlink-clean-server -> Up (healthy), 0.0.0.0:28081->8080/tcp
+hao-shortlink-clean-mysql -> Up (healthy), 0.0.0.0:23306->3306/tcp
+hao-shortlink-clean-redis -> Up (healthy), 0.0.0.0:26379->6379/tcp
+
+GET /api/health via clean Nginx：
+HTTP/1.1 200 OK
+Server: nginx/1.31.2
+{"status":"ok"}
+
+POST /api/short-links via clean Nginx：
+HTTP/1.1 201 Created
+{"code":"000001","short_url":"/s/000001","original_url":"https://example.com/v1.2-clean"}
+
+GET /s/000001 via clean Nginx：
+HTTP/1.1 302 Found
+Location: https://example.com/v1.2-clean
+
+Redis 回填：
+GET shortlink:000001 -> https://example.com/v1.2-clean
+
+MySQL 查询：
+1    000001    https://example.com/v1.2-clean
+
+GET /s/notfound via clean Nginx：
+HTTP/1.1 404 Short link not found
+
+POST /api/short-links with invalid URL via clean Nginx：
+HTTP/1.1 400 URL must start with http:// or https://
+
+GET / via clean Nginx：
+HTTP/1.1 404 Not Found
+{"error":{"code":"not_found","message":"Not Found"}}
+
+GET /api/health direct service debug port：
+HTTP/1.1 200 OK
+{"status":"ok"}
+```
+
+边界说明：
+
+- v1.2 的 Compose 配置面向本地开发和验证。
+- 当前保留 `18080` 作为 `shortlink_server` 直连调试入口。
+- 生产化部署应只对外暴露 Nginx 的 80/443，`shortlink_server`、MySQL 和 Redis 应仅在内部网络可见。
+- HTTPS/TLS 终止后续由 Nginx 配置承接，当前尚未实现。
 
 ## 当前文档任务验证
 

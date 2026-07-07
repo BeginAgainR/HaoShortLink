@@ -12,17 +12,17 @@
 - 确认项目在 Linux 环境中可构建。
 - 防止基础编译错误进入后续任务。
 
-当前状态：已通过 Linux VM 构建验证和 v1.1 干净克隆验证。
+当前状态：已通过 Linux VM 构建验证、v1.1 干净克隆验证和 v1.2 本地干净克隆 Compose 验证。
 
 最近一次验证：
 
-- 环境：OrbStack Linux VM `haoHTTP`
-- 类型：干净克隆验证
+- 环境：OrbStack Docker，本地干净克隆目录
+- 类型：本地干净克隆 Compose 验证
 - 分支：`refactor/hao-shortlink-cleanup`
-- 提交：`4a53281`
-- 项目路径：`/tmp/haoHTTP-clean-v1.1-final`
-- 构建目录：`/tmp/haoHTTP-clean-v1.1-final-build`
-- 结果：`[100%] Built target shortlink_server`
+- 提交：`ce3f605`
+- 项目路径：`/tmp/haoHTTP-clean-v1.2-final`
+- 验证入口：`http://127.0.0.1:28080`
+- 结果：`Nginx -> shortlink_server -> MySQL / Redis` 闭环通过
 
 触发条件：
 
@@ -52,7 +52,7 @@
 
 - 验证服务、数据库、缓存等组件协作。
 
-当前状态：MySQL 持久化和 Redis 查询缓存已通过手工集成验证；自动化集成测试尚未建立。
+当前状态：MySQL 持久化、Redis 查询缓存和 Nginx 反向代理已通过手工集成验证；自动化集成测试尚未建立。
 
 ### 压测
 
