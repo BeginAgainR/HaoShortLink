@@ -1,0 +1,40 @@
+name: hao-shortlink-dev
+
+services:
+  mysql:
+    image: ${SHORTLINK_MYSQL_IMAGE:-mysql:8.0}
+    container_name: hao-shortlink-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: hao_shortlink_root
+      MYSQL_DATABASE: hao_shortlink
+      MYSQL_USER: hao_shortlink
+      MYSQL_PASSWORD: hao_shortlink
+    ports:
+      - "13306:3306"
+    volumes:
+      - hao_shortlink_mysql_data:/var/lib/mysql
+      - ./apps/shortlink_server/sql/001_create_short_links.sql:/docker-entrypoint-initdb.d/001_create_short_links.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uhao_shortlink -phao_shortlink --silent"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 20s
+
+  redis:
+    image: ${SHORTLINK_REDIS_IMAGE:-redis:7-alpine}
+    container_name: hao-shortlink-redis
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "16379:6379"
+    volumes:
+      - hao_shortlink_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  hao_shortlink_mysql_data:
+  hao_shortlink_redis_data:

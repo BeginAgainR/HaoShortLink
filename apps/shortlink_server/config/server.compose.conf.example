@@ -1,0 +1,24 @@
+# HaoShortLink local configuration for Docker Compose dependencies.
+# Format: key=value
+
+server.name=HaoShortLink
+server.port=8080
+server.thread_num=4
+log.level=INFO
+
+# This file is intended for shortlink_server running in the haoHTTP
+# OrbStack Linux machine while MySQL and Redis run in OrbStack Docker.
+storage.type=mysql
+mysql.host=tcp://docker.orb.internal:13306
+mysql.user=hao_shortlink
+mysql.password=hao_shortlink
+mysql.database=hao_shortlink
+mysql.pool_size=4
+
+# Redis is an optional query cache for storage.type=mysql.
+redis.enabled=true
+redis.host=docker.orb.internal
+redis.port=16379
+redis.database=0
+redis.ttl_seconds=3600
+redis.key_prefix=shortlink:
