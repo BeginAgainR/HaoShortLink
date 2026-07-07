@@ -104,6 +104,7 @@ cd /Users/hao/Code/haoHTTP
 ```text
 apps/shortlink_server/config/server.conf.example
 apps/shortlink_server/config/server.compose.conf.example
+apps/shortlink_server/config/server.container.conf.example
 ```
 
 示例内容：
@@ -131,56 +132,72 @@ redis.enabled=false
 
 - 本地调试时可以复制示例文件为临时配置文件，并按环境修改数据库密码等敏感信息。
 - 不要把包含真实密码的个人配置提交到仓库。
-- `server.compose.conf.example` 用于连接仓库根目录 `compose.yaml` 启动的 MySQL 和 Redis。
+- `server.compose.conf.example` 用于 `shortlink_server` 在 `haoHTTP` VM 中运行、连接仓库根目录 `compose.yaml` 启动的 MySQL 和 Redis。
+- `server.container.conf.example` 用于 `shortlink_server` 在 Docker Compose 容器内运行、通过服务名连接 MySQL 和 Redis。
 - Nginx 和线上配置模板尚未接入。
 
-## Docker Compose 依赖
+## Docker Compose 本地运行
 
-当前 `compose.yaml` 只编排本地开发依赖：
+当前 `compose.yaml` 编排本地开发环境：
 
 - MySQL
 - Redis
+- `shortlink_server`
 
 当前不编排：
 
-- `shortlink_server`
 - Nginx
 - CI 或压测环境
 
 运行位置：
 
-- MySQL 和 Redis 容器运行在 OrbStack Docker 中。
-- `shortlink_server` 仍在 OrbStack Linux VM `haoHTTP` 中构建和运行。
-- `haoHTTP` 访问 OrbStack Docker 发布端口时使用 `docker.orb.internal`。
+- MySQL、Redis 和 `shortlink_server` 容器运行在 OrbStack Docker 中。
+- `shortlink_server` 容器通过 Compose 服务名 `mysql`、`redis` 访问依赖。
+- 如果在 `haoHTTP` VM 中手工运行 `shortlink_server`，访问 OrbStack Docker 发布端口时使用 `docker.orb.internal`。
 - 不需要在 `haoHTTP` Linux VM 内安装 Docker。
 
 端口约定：
 
 ```text
+shortlink_server 容器端口 8080 -> OrbStack Docker 发布端口 18080
 MySQL 容器端口 3306 -> OrbStack Docker 发布端口 13306
 Redis 容器端口 6379 -> OrbStack Docker 发布端口 16379
 ```
 
 说明：
 
-- 使用 `13306` 和 `16379` 是为了避免和本地已有 MySQL、Redis 默认端口冲突。
+- 使用 `18080`、`13306` 和 `16379` 是为了避免和本地已有服务默认端口冲突。
 - MySQL 容器第一次初始化空数据目录时，会执行 `apps/shortlink_server/sql/001_create_short_links.sql`。
 - 如果 MySQL 数据卷已经存在，初始化 SQL 不会重复执行。
 - 开发环境用户名、密码和数据库名以 `compose.yaml` 为准。
 
-启动依赖：
+构建并启动本地 Compose 环境：
 
 ```bash
 cd /Users/hao/Code/haoHTTP
-docker compose up -d
+docker compose up -d --build
 ```
 
 如果当前网络无法访问 Docker Hub，可以临时指定镜像源：
 
 ```bash
+SHORTLINK_SERVER_BASE_IMAGE=docker.m.daocloud.io/library/ubuntu:22.04 \
 SHORTLINK_MYSQL_IMAGE=docker.m.daocloud.io/library/mysql:8.0 \
 SHORTLINK_REDIS_IMAGE=docker.m.daocloud.io/library/redis:7-alpine \
-docker compose up -d
+docker compose up -d --build
+```
+
+如果当前网络无法访问默认 muduo 源码包地址，可以临时指定一个可访问的 muduo tarball 地址：
+
+```bash
+SHORTLINK_MUDUO_TARBALL_URL=https://example.com/path/to/muduo.tar.gz \
+docker compose build shortlink_server
+```
+
+如果只想启动 MySQL 和 Redis 依赖，供 `haoHTTP` VM 中手工运行的 `shortlink_server` 使用：
+
+```bash
+docker compose up -d mysql redis
 ```
 
 查看状态：
@@ -194,6 +211,27 @@ docker compose ps
 ```bash
 docker compose logs mysql
 docker compose logs redis
+docker compose logs shortlink_server
+```
+
+验证服务健康检查：
+
+```bash
+curl -i http://127.0.0.1:18080/api/health
+```
+
+验证创建短链接：
+
+```bash
+curl -i -X POST http://127.0.0.1:18080/api/short-links \
+  -H 'Content-Type: application/json' \
+  -d '{"url":"https://example.com/compose-container"}'
+```
+
+验证短码跳转：
+
+```bash
+curl -i http://127.0.0.1:18080/s/000001
 ```
 
 验证 MySQL 表结构：
@@ -905,6 +943,61 @@ HTTP/1.1 400 URL must start with http:// or https://
 - 默认镜像仍为 `mysql:8.0` 和 `redis:7-alpine`。
 - 本次验证时 Docker Hub 访问超时，临时使用 `SHORTLINK_MYSQL_IMAGE` 和 `SHORTLINK_REDIS_IMAGE` 指定镜像源完成拉取。
 - `haoHTTP` VM 内不需要安装 Docker；Docker Compose 依赖由 OrbStack Docker 管理。
+
+### shortlink_server Docker Compose 服务容器验证
+
+状态：已完成。
+
+验证日期：
+
+```text
+2026-07-07
+```
+
+验证内容：
+
+- 使用 `Dockerfile` 构建 `hao-shortlink-server:dev`。
+- Dockerfile 固定 muduo 源码版本，只构建 `muduo_base` 和 `muduo_net`。
+- `shortlink_server` 容器使用 `server.container.conf.example`。
+- `shortlink_server` 容器通过 Compose 服务名 `mysql`、`redis` 连接依赖。
+- 从 `127.0.0.1:18080` 访问容器服务，跑通健康检查、创建短链接、短码跳转、Redis 回填和 MySQL 查询。
+
+最近一次结果：
+
+```text
+构建镜像：
+hao-shortlink-server:dev -> Built
+[100%] Built target shortlink_server
+
+Docker Compose：
+hao-shortlink-mysql -> Up (healthy), 0.0.0.0:13306->3306/tcp
+hao-shortlink-redis -> Up (healthy), 0.0.0.0:16379->6379/tcp
+hao-shortlink-server -> Up (healthy), 0.0.0.0:18080->8080/tcp
+
+GET /api/health：
+HTTP/1.1 200 OK
+{"status":"ok"}
+
+POST /api/short-links：
+HTTP/1.1 201 Created
+{"code":"000002","short_url":"/s/000002","original_url":"https://example.com/compose-container"}
+
+GET /s/000002：
+HTTP/1.1 302 Found
+Location: https://example.com/compose-container
+
+Redis 回填：
+GET shortlink:000002 -> https://example.com/compose-container
+
+MySQL 查询：
+2    000002    https://example.com/compose-container
+
+GET /s/notfound：
+HTTP/1.1 404 Short link not found
+
+POST /api/short-links with invalid URL：
+HTTP/1.1 400 URL must start with http:// or https://
+```
 
 ## 当前文档任务验证
 

@@ -184,13 +184,14 @@ v1.2 目标是把当前手工启动和验证流程整理为更标准的本地工
    - 状态：进行中。
    - 已完成 MySQL、Redis 的本地 Docker Compose 依赖编排。
    - 已验证 `haoHTTP` 通过 `docker.orb.internal` 连接 OrbStack Docker 中的 MySQL 和 Redis。
-   - `shortlink_server` 服务容器尚未实现。
-   - 后续提供完整本地一键启动和停止方式。
+   - 已新增并验证 `shortlink_server` 服务容器配置。
+   - 后续继续接入 Nginx，形成统一 HTTP 入口。
 2. 配置整理：
    - 状态：进行中。
    - 已补充 Linux VM 手工运行方式、配置要点、接口验证和常见故障排查。
    - 已新增 Docker Compose 依赖场景下的服务配置样例。
-   - 后续继续明确服务容器化和 Nginx 场景下的配置样例。
+   - 已新增服务容器内使用的配置样例。
+   - 后续继续明确 Nginx 场景下的配置样例。
    - 避免把本机临时配置写死到代码中。
 3. Nginx：
    - 状态：尚未实现。

@@ -16,7 +16,7 @@ HaoShortLink 是一个基于 muduo 网络库的 C++17 HTTP 框架项目。当前
 - `apps/shortlink_server/` 已实现健康检查、创建短链接和短码跳转。
 - 短链接存储支持内存版和 MySQL 版。
 - MySQL 版支持可选 Redis 查询缓存。
-- 已新增并验证 MySQL/Redis 本地 Docker Compose 依赖编排。
+- 已新增并验证本地 Docker Compose 编排，可启动 MySQL、Redis 和 `shortlink_server` 服务容器。
 - 完整部署方案尚未实现。
 - 已完成请求日志、统一 JSON 错误响应、JSON 响应辅助和配置加载等框架基础能力。
 - 下一阶段重点是工程化运行、测试验证、性能稳定性和可观测性建设。
@@ -44,7 +44,6 @@ docs/                       公开项目文档
 以下能力尚未实现，不应在公开文档中描述为已完成：
 
 - Redis 限流
-- `shortlink_server` 服务容器
 - Nginx
 - 自动化测试和 CI
 - 压测

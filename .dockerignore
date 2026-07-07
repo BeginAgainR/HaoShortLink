@@ -1,0 +1,12 @@
+.git
+.gitignore
+AGENTS.md
+build
+cmake-build-*
+*.o
+*.a
+*.so
+*.dylib
+*.log
+.DS_Store
+docs

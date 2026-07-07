@@ -1,6 +1,23 @@
 name: hao-shortlink-dev
 
 services:
+  shortlink_server:
+    image: ${SHORTLINK_SERVER_IMAGE:-hao-shortlink-server:dev}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        BASE_IMAGE: ${SHORTLINK_SERVER_BASE_IMAGE:-ubuntu:22.04}
+        MUDUO_TARBALL_URL: ${SHORTLINK_MUDUO_TARBALL_URL:-https://github.com/chenshuo/muduo/archive/f1fc77e0c13b80e5086ff457362c8a86d1b609d4.tar.gz}
+    container_name: hao-shortlink-server
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "18080:8080"
+
   mysql:
     image: ${SHORTLINK_MYSQL_IMAGE:-mysql:8.0}
     container_name: hao-shortlink-mysql
