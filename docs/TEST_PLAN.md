@@ -1,7 +1,7 @@
 # 测试计划
 
 状态：草案
-当前实现：已建立最小测试骨架；已补充第一批框架基础测试、短链业务纯逻辑测试、API 冒烟测试脚本、MySQL / Redis 集成测试脚本、Redis 不可用回退测试脚本和 Compose 依赖编排脚本；CI 第一版 workflow 已新增，并已在 Linux VM 中验证核心命令链路。
+当前实现：已建立最小测试骨架；已补充第一批框架基础测试、短链业务纯逻辑测试、API 冒烟测试脚本、MySQL / Redis 集成测试脚本、Redis 不可用回退测试脚本和 Compose 依赖编排脚本；CI 第一版 workflow 已新增，已在 Linux VM 中验证核心命令链路，并已通过 GitHub Actions 云端 CI。
 
 ## v1.3 执行顺序
 
@@ -34,7 +34,7 @@ v1.3 的目标是把当前手工验证沉淀为可重复执行的测试体系。
    - 覆盖 MySQL 持久化、Redis 未命中回源、Redis 回填和 Redis 不可用回退。
    - 依赖 Docker Compose，适合作为阶段收口或 CI 后续增强项。
 7. CI：
-   - 状态：第一版 workflow 已新增，核心命令链路已在 Linux VM 中验证。
+   - 状态：第一版 workflow 已新增，核心命令链路已在 Linux VM 中验证，GitHub Actions 云端 CI 已通过。
    - 第一版先做 Linux 构建、CTest 和 API 冒烟测试。
    - 后续再接入 Compose 集成测试。
 
@@ -95,17 +95,17 @@ HAOHTTP_TEST_HOST=haoHTTP@orb bash tests/scripts/run_integration_with_compose.sh
 
 当前状态：已通过 Linux VM 构建验证、v1.1 干净克隆验证、v1.2 本地干净克隆 Compose 验证、
 v1.3 最小测试骨架验证、第一批框架基础测试验证、短链业务纯逻辑测试验证、API 冒烟测试验证、
-MySQL / Redis 集成测试验证、Redis 不可用回退测试验证、Compose 依赖编排验证和 CI 第一版核心命令链路验证。
+MySQL / Redis 集成测试验证、Redis 不可用回退测试验证、Compose 依赖编排验证、CI 第一版核心命令链路验证和 GitHub Actions 云端 CI 验证。
 
 最近一次验证：
 
 - 环境：OrbStack Linux VM `haoHTTP`
-- 类型：CI 第一版核心命令链路验证
+- 类型：CI 第一版核心命令链路验证和 GitHub Actions 云端 CI 验证
 - 分支：`refactor/v1.3-tests-ci`
 - 项目路径：`/Users/hao/Code/haoHTTP`
 - 构建目录：`/tmp/haoHTTP-build`
 - 命令：`cmake -S . -B /tmp/haoHTTP-build -DCMAKE_BUILD_TYPE=Release && cmake --build /tmp/haoHTTP-build && ctest --test-dir /tmp/haoHTTP-build --output-on-failure && bash tests/scripts/api_smoke_test.sh`
-- 结果：`shortlink_server` 构建通过，`hao_shortlink_tests` 通过，API 冒烟测试通过
+- 结果：Linux VM 中 `shortlink_server` 构建通过，`hao_shortlink_tests` 通过，API 冒烟测试通过；GitHub Actions 云端 CI 通过
 
 补充验证：
 
