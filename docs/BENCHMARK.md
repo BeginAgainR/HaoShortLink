@@ -81,11 +81,21 @@ HAOHTTP_BENCH_CONCURRENCY=16 \
 bash tests/scripts/benchmark_shortlink.sh
 ```
 
+```bash
+HAOHTTP_BENCH_SCENARIO=redirect-cache-hit \
+HAOHTTP_BENCH_MODE=mysql-redis \
+HAOHTTP_BENCH_REQUESTS=1000 \
+HAOHTTP_BENCH_CONCURRENCY=16 \
+bash tests/scripts/benchmark_shortlink.sh
+```
+
 支持场景：
 
 - `health`
 - `create`
 - `redirect`
+- `redirect-cache-hit`
+- `redirect-cache-miss`
 - `invalid-url`
 - `missing-code`
 - `all`
@@ -124,6 +134,8 @@ bash tests/scripts/benchmark_shortlink.sh
 - 已完成脚本 `--help` 输出验证。
 - 当前本地和 `haoHTTP` VM 尚未安装 `hey`；脚本会自动回退到 `curl` 模式。
 - 已使用 `curl` 模式完成小请求量脚本链路验证；该验证只确认脚本可运行，不作为性能基线记录。
+- `redirect-cache-hit` 会预热 Redis 后压测跳转。
+- `redirect-cache-miss` 会删除 Redis key，并强制只执行 1 个请求，用于观察单次未命中回源成本。
 
 ## 计划压测场景
 

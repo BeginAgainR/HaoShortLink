@@ -63,7 +63,7 @@ fail()
 usage()
 {
     cat <<EOF
-Usage: HAOHTTP_BENCH_SCENARIO=health|create|redirect|invalid-url|missing-code|all \\
+Usage: HAOHTTP_BENCH_SCENARIO=health|create|redirect|redirect-cache-hit|redirect-cache-miss|invalid-url|missing-code|all \\
        HAOHTTP_BENCH_MODE=memory|mysql|mysql-redis \\
        bash tests/scripts/benchmark_shortlink.sh
 
@@ -110,6 +110,13 @@ cleanup_redis_key()
     [[ -n "${REDIRECT_CODE}" ]] || return 0
     redis-cli -h "${REDIS_HOST}" -p "${REDIS_PORT}" DEL "${REDIS_KEY_PREFIX}${REDIRECT_CODE}" \
         >/dev/null 2>&1 || true
+}
+
+delete_redis_key()
+{
+    local code="$1"
+    command -v redis-cli >/dev/null 2>&1 || fail "redis-cli is required for Redis cache benchmark scenarios"
+    redis-cli -h "${REDIS_HOST}" -p "${REDIS_PORT}" DEL "${REDIS_KEY_PREFIX}${code}" >/dev/null
 }
 
 write_config()
@@ -195,6 +202,17 @@ create_short_link()
     fi
 
     sed -n 's/.*"code":"\([^"]*\)".*/\1/p' "${body_file}"
+}
+
+warm_redirect_cache()
+{
+    local code="$1"
+    local status
+
+    status="$(curl -sS --max-time "${CURL_MAX_TIME_SECONDS}" -o /dev/null -w "%{http_code}" "${BASE_URL}/s/${code}")"
+    if [[ "${status}" != "302" ]]; then
+        fail "failed to warm redirect cache for ${code}: HTTP ${status}"
+    fi
 }
 
 hey_supports_disable_redirects()
@@ -445,6 +463,23 @@ run_scenario()
             REDIRECT_CODE="$(create_short_link "${BENCH_REDIRECT_URL}")"
             [[ -n "${REDIRECT_CODE}" ]] || fail "created redirect benchmark link did not return a code"
             run_benchmark "GET /s/{code}" "302" "GET" "/s/${REDIRECT_CODE}"
+            ;;
+        redirect-cache-hit)
+            [[ "${MODE}" == "mysql-redis" ]] || fail "redirect-cache-hit requires HAOHTTP_BENCH_MODE=mysql-redis"
+            REDIRECT_CODE="$(create_short_link "${BENCH_REDIRECT_URL}")"
+            [[ -n "${REDIRECT_CODE}" ]] || fail "created redirect benchmark link did not return a code"
+            warm_redirect_cache "${REDIRECT_CODE}"
+            run_benchmark "GET /s/{code} Redis hit" "302" "GET" "/s/${REDIRECT_CODE}"
+            ;;
+        redirect-cache-miss)
+            [[ "${MODE}" == "mysql-redis" ]] || fail "redirect-cache-miss requires HAOHTTP_BENCH_MODE=mysql-redis"
+            REDIRECT_CODE="$(create_short_link "${BENCH_REDIRECT_URL}")"
+            [[ -n "${REDIRECT_CODE}" ]] || fail "created redirect benchmark link did not return a code"
+            delete_redis_key "${REDIRECT_CODE}"
+            local original_requests="${REQUESTS}"
+            REQUESTS=1
+            run_benchmark "GET /s/{code} Redis miss" "302" "GET" "/s/${REDIRECT_CODE}"
+            REQUESTS="${original_requests}"
             ;;
         invalid-url)
             run_benchmark "POST invalid URL" "400" "POST" "/api/short-links" '{"url":"ftp://example.com/not-supported"}'
