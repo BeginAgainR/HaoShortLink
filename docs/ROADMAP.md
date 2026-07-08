@@ -15,7 +15,7 @@
 | v1.0 | 已完成 | ShortLink 最小闭环 | HTTP API、短码生成、内存存储、302 重定向 |
 | v1.1 | 已完成 | 持久化与缓存 | MySQL、Redis、SQL 脚本 |
 | v1.2 | 已完成 | 工程化运行 | Docker Compose、Nginx、配置样例、部署文档 |
-| v1.3 | 进行中 | 测试与 CI | 框架测试、API 测试、集成测试、CI |
+| v1.3 | 已完成 | 测试与 CI | 框架测试、API 测试、集成测试、CI |
 | v1.4 | 草案 | 性能与稳定性 | 压测、限流、连接池优化、错误场景覆盖 |
 | v1.5 | 草案 | 可观测性 | 结构化日志、指标统计、Prometheus、Grafana |
 | v2.0 | 暂缓 | 进阶业务能力 | 访问统计、用户系统、消息队列、后台管理 |
@@ -211,11 +211,11 @@ v1.2 目标是把当前手工启动和验证流程整理为更标准的本地工
 - MySQL / Redis 集成测试。
 - CI 构建验证。
 
-当前状态：进行中，已建立最小测试骨架并补充第一批框架基础测试、短链业务纯逻辑测试、API 冒烟测试脚本、MySQL / Redis 集成测试脚本、Redis 不可用回退测试脚本和 Compose 依赖编排脚本；CI 第一版 workflow 已新增，核心命令链路已在 Linux VM 中验证，GitHub Actions 云端 CI 已通过。
+当前状态：已完成。已建立最小测试骨架并补充第一批框架基础测试、短链业务纯逻辑测试、API 冒烟测试脚本、MySQL / Redis 集成测试脚本、Redis 不可用回退测试脚本和 Compose 依赖编排脚本；CI 第一版 workflow 已新增，核心命令链路已在 Linux VM 中验证，GitHub Actions 云端 CI 已通过。
 
-### v1.3 执行批次草案
+### v1.3 执行批次
 
-v1.3 目标是把当前手工验证沉淀为可重复执行的测试体系。
+v1.3 目标是把当前手工验证沉淀为可重复执行的测试体系，已完成第一版收口。
 
 1. 最小测试骨架：
    - 状态：已完成。
@@ -234,7 +234,7 @@ v1.3 目标是把当前手工验证沉淀为可重复执行的测试体系。
    - 状态：已完成第一批 MySQL / Redis 依赖已启动版脚本和 Compose 依赖编排脚本。
    - 覆盖 MySQL 持久化、Redis 未命中回源、Redis 回填和 Redis 不可用回退 MySQL。
 6. CI：
-   - 状态：第一版 workflow 已新增，核心命令链路已在 Linux VM 中验证，GitHub Actions 云端 CI 已通过。
+   - 状态：已完成第一版 workflow，核心命令链路已在 Linux VM 中验证，GitHub Actions 云端 CI 已通过。
    - 第一版在远端 Linux 环境中自动执行构建、CTest 和 API 冒烟测试。
    - MySQL / Redis Compose 集成测试后续作为增强项单独接入。
 

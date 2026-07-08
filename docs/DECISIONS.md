@@ -67,6 +67,21 @@ v1.2 在 v1.1 持久化和查询缓存基础上补充本地工程化运行环境
 
 v1.2 不处理完整线上部署、HTTPS/TLS 终止、发布回滚、日志采集、监控告警或压测。
 
+### ShortLink v1.3 范围
+
+状态：已确认
+
+v1.3 在 v1.2 本地工程化运行环境基础上补充第一版可重复测试体系和 CI：
+
+- CMake / CTest 测试入口。
+- 第一批框架基础测试和短链业务纯逻辑测试。
+- API 冒烟测试脚本。
+- MySQL / Redis 集成测试脚本和 Redis 不可用回退测试脚本。
+- Compose 依赖编排测试脚本。
+- GitHub Actions 第一版 workflow，覆盖 Linux 构建、CTest 和 API 冒烟测试。
+
+v1.3 不把 MySQL / Redis Compose 集成测试、Nginx 验证、压测、限流或监控接入第一版 CI；这些能力后续作为 v1.4 及之后的增强项处理。
+
 ## 暂定
 
 ### API 路径
