@@ -54,6 +54,19 @@ v1.1 在 V1 最小闭环基础上补充持久化和查询缓存：
 
 v1.1 不处理用户系统、访问统计、过期策略、限流、Docker Compose、Nginx、消息队列或监控。
 
+### ShortLink v1.2 范围
+
+状态：已确认
+
+v1.2 在 v1.1 持久化和查询缓存基础上补充本地工程化运行环境：
+
+- Docker Compose 编排 MySQL、Redis、`shortlink_server` 和 Nginx。
+- Nginx 作为本地统一 HTTP 入口，反向代理到 `shortlink_server`。
+- 保留 `shortlink_server` 直连调试入口。
+- 补充 Compose、容器内运行和 VM 手工运行的配置样例。
+
+v1.2 不处理完整线上部署、HTTPS/TLS 终止、发布回滚、日志采集、监控告警或压测。
+
 ## 暂定
 
 ### API 路径
@@ -184,7 +197,7 @@ MySQL AUTO_INCREMENT id -> Base62(code)
 v1.1 中 Redis 只作为短码跳转查询缓存：
 
 ```text
-shortlink:code:{code} -> original_url
+shortlink:{code} -> original_url
 ```
 
 说明：
@@ -210,7 +223,8 @@ shortlink:code:{code} -> original_url
 - 用户系统。
 - 访问统计。
 - Redis 限流。
-- Docker Compose。
-- Nginx。
+- 完整线上部署。
+- HTTPS/TLS 终止。
+- 发布回滚。
 - 消息队列。
 - 监控和告警。

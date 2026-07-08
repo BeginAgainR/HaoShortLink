@@ -4,6 +4,8 @@ project(HaoShortLink)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+include(CTest)
+
 find_package(OpenSSL REQUIRED)
 find_path(HIREDIS_INCLUDE_DIR hiredis/hiredis.h)
 find_library(HIREDIS_LIBRARY hiredis)
@@ -51,6 +53,10 @@ target_link_libraries(shortlink_server
     ssl
     crypto
 )
+
+if (BUILD_TESTING)
+    add_subdirectory(tests)
+endif()
 
 message(STATUS "Project: ${PROJECT_NAME}")
 message(STATUS "Main source file: ${SHORTLINK_SERVER_MAIN}")

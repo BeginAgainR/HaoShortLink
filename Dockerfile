@@ -20,6 +20,7 @@ RUN curl -fsSL --retry 3 --retry-delay 2 -o /tmp/muduo.tar.gz "${MUDUO_TARBALL_U
     && cmake -S /tmp/muduo-src -B /tmp/muduo-build \
         -DCMAKE_BUILD_TYPE=Release \
         -DMUDUO_BUILD_EXAMPLES=OFF \
+        -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
     && cmake --build /tmp/muduo-build --target muduo_base muduo_net -j"$(nproc)" \
     && mkdir -p /opt/muduo/include /opt/muduo/lib \
     && cp /tmp/muduo-build/lib/libmuduo_base.a /tmp/muduo-build/lib/libmuduo_net.a /opt/muduo/lib/ \
@@ -45,7 +46,9 @@ COPY CMakeLists.txt ./
 COPY HttpServer ./HttpServer
 COPY apps ./apps
 
-RUN cmake -S /src -B /tmp/haoHTTP-build -DCMAKE_BUILD_TYPE=Release \
+RUN cmake -S /src -B /tmp/haoHTTP-build \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DBUILD_TESTING=OFF \
     && cmake --build /tmp/haoHTTP-build --target shortlink_server -j"$(nproc)" \
     && install -Dm755 /tmp/haoHTTP-build/shortlink_server /opt/hao-shortlink/shortlink_server \
     && mkdir -p /opt/hao-shortlink/apps/shortlink_server \

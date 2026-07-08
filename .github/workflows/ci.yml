@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - refactor/v1.3-tests-ci
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: Linux build and tests
+    runs-on: ubuntu-22.04
+
+    env:
+      BUILD_DIR: /tmp/haoHTTP-build
+      MUDUO_TARBALL_URL: https://github.com/chenshuo/muduo/archive/f1fc77e0c13b80e5086ff457362c8a86d1b609d4.tar.gz
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ca-certificates \
+            curl \
+            cmake \
+            build-essential \
+            libboost-dev \
+            libssl-dev \
+            libmysqlclient-dev \
+            libmysqlcppconn-dev \
+            libhiredis-dev
+
+      - name: Build and install muduo core libraries
+        run: |
+          curl -fsSL --retry 3 --retry-delay 2 -o /tmp/muduo.tar.gz "${MUDUO_TARBALL_URL}"
+          mkdir -p /tmp/muduo-src
+          tar -xzf /tmp/muduo.tar.gz -C /tmp/muduo-src --strip-components=1
+          cmake -S /tmp/muduo-src -B /tmp/muduo-build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DMUDUO_BUILD_EXAMPLES=OFF \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+          cmake --build /tmp/muduo-build --target muduo_base muduo_net -j"$(nproc)"
+          sudo mkdir -p /usr/local/include/muduo /usr/local/lib
+          sudo cp /tmp/muduo-build/lib/libmuduo_base.a /tmp/muduo-build/lib/libmuduo_net.a /usr/local/lib/
+          sudo cp -R /tmp/muduo-src/muduo/. /usr/local/include/muduo/
+          sudo ldconfig
+
+      - name: Configure CMake
+        run: cmake -S . -B "${BUILD_DIR}" -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build "${BUILD_DIR}" -j"$(nproc)"
+
+      - name: Run CTest
+        run: ctest --test-dir "${BUILD_DIR}" --output-on-failure
+
+      - name: Run API smoke test
+        run: bash tests/scripts/api_smoke_test.sh
