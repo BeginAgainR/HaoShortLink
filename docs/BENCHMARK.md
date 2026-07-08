@@ -1,7 +1,7 @@
 # 压测计划
 
 状态：v1.4 进行中
-当前实现：v1.4.0 已完成压测与稳定性阶段定界；压测脚本、压测执行和结果记录尚未开始
+当前实现：v1.4.0 已完成压测与稳定性阶段定界；v1.4.1 已新增压测脚本入口和结果记录格式；压测执行和结果记录尚未开始
 
 ## 说明
 
@@ -44,6 +44,86 @@ MySQL 持久化、Redis 查询缓存、本地 Compose 编排和第一版测试 /
 - `redis.enabled`。
 - 压测工具和版本。
 - 并发数、请求总数或持续时间。
+
+## 当前压测入口
+
+当前压测脚本：
+
+```bash
+bash tests/scripts/benchmark_shortlink.sh
+```
+
+脚本默认：
+
+- 使用 `/tmp/haoHTTP-build/shortlink_server`。
+- 自动选择压测工具；优先使用 `hey`，未安装时使用 `curl` 并发循环。
+- 使用内存存储模式。
+- 并发数为 `16`。
+- 请求数为 `1000`。
+- 自动启动临时 `shortlink_server`，结束后清理进程和临时目录。
+- 输出可复制到本文档的 Markdown 表格行。
+
+常用示例：
+
+```bash
+HAOHTTP_BENCH_SCENARIO=health \
+HAOHTTP_BENCH_MODE=memory \
+HAOHTTP_BENCH_REQUESTS=1000 \
+HAOHTTP_BENCH_CONCURRENCY=16 \
+bash tests/scripts/benchmark_shortlink.sh
+```
+
+```bash
+HAOHTTP_BENCH_SCENARIO=redirect \
+HAOHTTP_BENCH_MODE=mysql-redis \
+HAOHTTP_BENCH_REQUESTS=1000 \
+HAOHTTP_BENCH_CONCURRENCY=16 \
+bash tests/scripts/benchmark_shortlink.sh
+```
+
+支持场景：
+
+- `health`
+- `create`
+- `redirect`
+- `invalid-url`
+- `missing-code`
+- `all`
+
+支持模式：
+
+- `memory`
+- `mysql`
+- `mysql-redis`
+
+可配置变量：
+
+- `HAOHTTP_BUILD_DIR`
+- `HAOHTTP_SERVER_BIN`
+- `HAOHTTP_BENCH_TOOL`
+- `HAOHTTP_HEY_BIN`
+- `HAOHTTP_BENCH_PORT`
+- `HAOHTTP_BENCH_THREAD_NUM`
+- `HAOHTTP_BENCH_MYSQL_POOL_SIZE`
+- `HAOHTTP_BENCH_REQUESTS`
+- `HAOHTTP_BENCH_CONCURRENCY`
+- `HAOHTTP_BENCH_SCENARIO`
+- `HAOHTTP_BENCH_MODE`
+- `HAOHTTP_MYSQL_HOST`
+- `HAOHTTP_MYSQL_PORT`
+- `HAOHTTP_MYSQL_USER`
+- `HAOHTTP_MYSQL_PASSWORD`
+- `HAOHTTP_MYSQL_DATABASE`
+- `HAOHTTP_REDIS_HOST`
+- `HAOHTTP_REDIS_PORT`
+- `HAOHTTP_REDIS_KEY_PREFIX`
+
+当前验证：
+
+- 已完成脚本 Bash 语法检查。
+- 已完成脚本 `--help` 输出验证。
+- 当前本地和 `haoHTTP` VM 尚未安装 `hey`；脚本会自动回退到 `curl` 模式。
+- 已使用 `curl` 模式完成小请求量脚本链路验证；该验证只确认脚本可运行，不作为性能基线记录。
 
 ## 计划压测场景
 
