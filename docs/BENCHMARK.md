@@ -160,6 +160,31 @@ bash tests/scripts/benchmark_shortlink.sh
 - `redirect-cache-hit` 会预热 Redis 后压测跳转。
 - `redirect-cache-miss` 会删除 Redis key，并强制只执行 1 个请求，用于观察单次未命中回源成本。
 
+## 当前诊断入口
+
+针对 BUG-004，当前新增 MySQL 创建路径并发诊断脚本：
+
+```bash
+bash tests/scripts/mysql_create_concurrency_diagnostic.sh
+```
+
+脚本用途：
+
+- 启动 `storage.type=mysql` 的临时 `shortlink_server`。
+- 按并发阶梯压 `POST /api/short-links`。
+- 保留每档状态码分布。
+- 保留响应体样本。
+- 保留 `shortlink_server` 日志和临时配置。
+- 清理本次诊断插入的 MySQL 测试数据。
+
+默认参数：
+
+- `HAOHTTP_CREATE_DIAG_REQUESTS=100`
+- `HAOHTTP_CREATE_DIAG_CONCURRENCY_LEVELS="1 2 4 8 16"`
+- `HAOHTTP_CREATE_DIAG_THREAD_NUM=4`
+- `HAOHTTP_CREATE_DIAG_MYSQL_POOL_SIZE=4`
+- `HAOHTTP_CREATE_DIAG_PORT=18086`
+
 ## 计划压测场景
 
 ### 基础 HTTP
