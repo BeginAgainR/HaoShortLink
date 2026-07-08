@@ -1,7 +1,7 @@
 # 压测计划
 
 状态：v1.4 进行中
-当前实现：v1.4.0 已完成压测与稳定性阶段定界；v1.4.1 已新增压测脚本入口和结果记录格式；压测执行和结果记录尚未开始
+当前实现：v1.4.0 已完成压测与稳定性阶段定界；v1.4.1 已新增压测脚本入口和结果记录格式；v1.4.2 已完成第一轮 curl fallback 多模式基线；hey 压测基线尚未执行
 
 ## 说明
 
@@ -185,6 +185,52 @@ bash tests/scripts/benchmark_shortlink.sh
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | 待测 | 待测 | 待测 | 待测 | 待测 | 待测 | 待测 | 待测 | 待测 | 待测 |
 
+## v1.4.2 第一轮基线
+
+本轮只作为本地 curl fallback 基线，用于观察相对差异和暴露问题，不声明生产最大承载能力。
+
+环境：
+
+- 环境：OrbStack Linux VM `haoHTTP`
+- commit：`8e3b494`
+- 构建目录：`/tmp/haoHTTP-build`
+- 压测工具：脚本 `curl` fallback
+- 请求数：`500`
+- 并发数：`16`
+- `server.thread_num=4`
+- `mysql.pool_size=4`
+- 依赖：OrbStack Docker Compose 中的 MySQL 和 Redis，均为 healthy
+
+结果：
+
+| 场景 | 模式 | 并发 | 总请求/时长 | QPS | 平均延迟 | P95 | P99 | 错误率 | 备注 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| GET /api/health | memory | 16 | 500 requests | 2439.02 | 0.000379s | 0.001616s | 0.002072s | 0.00% | tool curl; expected 200; commit 8e3b494 |
+| POST /api/short-links | memory | 16 | 500 requests | 2659.57 | 0.000313s | 0.001456s | 0.001971s | 0.00% | tool curl; expected 201; commit 8e3b494 |
+| GET /s/{code} | memory | 16 | 500 requests | 2304.15 | 0.000493s | 0.001997s | 0.003623s | 0.00% | tool curl; expected 302; commit 8e3b494 |
+| POST invalid URL | memory | 16 | 500 requests | 2717.39 | 0.000383s | 0.001749s | 0.002360s | 0.00% | tool curl; expected 400; commit 8e3b494 |
+| GET missing short code | memory | 16 | 500 requests | 2450.98 | 0.000376s | 0.001677s | 0.002471s | 0.00% | tool curl; expected 404; commit 8e3b494 |
+| GET /api/health | mysql | 16 | 500 requests | 2732.24 | 0.000452s | 0.001859s | 0.002576s | 0.00% | tool curl; expected 200; commit 8e3b494 |
+| POST /api/short-links | mysql | 16 | 500 requests | 1091.70 | 0.011425s | 0.020525s | 0.024454s | 41.40% | tool curl; expected 201; commit 8e3b494 |
+| GET /s/{code} | mysql | 16 | 500 requests | 2475.25 | 0.001190s | 0.002493s | 0.003450s | 0.00% | tool curl; expected 302; commit 8e3b494 |
+| POST invalid URL | mysql | 16 | 500 requests | 2840.91 | 0.000348s | 0.001646s | 0.002206s | 0.00% | tool curl; expected 400; commit 8e3b494 |
+| GET missing short code | mysql | 16 | 500 requests | 2463.05 | 0.001118s | 0.002581s | 0.003260s | 0.00% | tool curl; expected 404; commit 8e3b494 |
+| GET /api/health | mysql-redis | 16 | 500 requests | 2762.43 | 0.000476s | 0.001912s | 0.002702s | 0.00% | tool curl; expected 200; commit 8e3b494 |
+| POST /api/short-links | mysql-redis | 16 | 500 requests | 1118.57 | 0.010933s | 0.018237s | 0.026043s | 40.40% | tool curl; expected 201; commit 8e3b494 |
+| GET /s/{code} Redis miss | mysql-redis | 16 | 1 requests | 2.26 | 0.413934s | 0.413934s | 0.413934s | 0.00% | tool curl; expected 302; commit 8e3b494 |
+| GET /s/{code} Redis hit | mysql-redis | 16 | 500 requests | 19.20 | 0.812246s | 0.845628s | 0.848110s | 0.00% | tool curl; expected 302; commit 8e3b494 |
+| POST invalid URL | mysql-redis | 16 | 500 requests | 2564.10 | 0.000435s | 0.001835s | 0.002449s | 0.00% | tool curl; expected 400; commit 8e3b494 |
+| GET missing short code | mysql-redis | 16 | 500 requests | 19.18 | 0.815036s | 0.833494s | 0.838910s | 0.00% | tool curl; expected 404; commit 8e3b494 |
+
+初步观察：
+
+- 内存模式五个场景错误率均为 0，QPS 在本轮 curl fallback 下约为 2300-2700。
+- MySQL 模式的跳转和不存在短码查询错误率为 0，但创建短链在并发 16 下出现 41.40% 错误率，需要进入后续异常场景或连接资源排查。
+- MySQL + Redis 模式的创建短链同样出现约 40% 错误率，说明问题更可能在 MySQL 创建路径或并发资源管理，而不是 Redis 查询缓存。
+- Redis hit 和 Redis missing-code 场景 QPS 约为 19，平均延迟约 0.8s，明显慢于纯 MySQL 查询路径；当前 Redis cache 实现每次 get/set 都新建连接，是后续重点排查方向。
+- Redis miss 单次请求约 0.41s，只作为单次未命中回源观察，不适合和 500 请求场景直接比较。
+- curl fallback 本身会创建大量本地 curl 进程，结果适合做项目内相对比较；正式性能结论仍建议补充 `hey` 基线。
+
 ## 结果分析记录
 
 每轮压测后补充：
@@ -196,13 +242,11 @@ bash tests/scripts/benchmark_shortlink.sh
 - 是否需要代码优化，或只需要调整配置。
 - 是否需要补充新的测试场景。
 
-## 当前不声明
+## 当前不声明的内容
 
-当前不声明任何性能指标，例如：
+当前不声明生产或极限性能指标，例如：
 
 - 最大 QPS。
-- 平均延迟。
-- P99 延迟。
 - 最大并发连接数。
 
-这些指标需要在可复现环境中测试后再记录。
+这些指标需要在更稳定的压测工具、更多轮次和明确资源观测下再记录。

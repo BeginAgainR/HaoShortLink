@@ -68,6 +68,28 @@ callback 时传入的是原始 `req`。
 
 已在 `HttpRequest::swap()` 中补充交换 `content_` 和 `contentLength_`。
 
+## BUG-004：MySQL 创建短链并发压测存在非 201 响应
+
+状态：待排查
+范围：`apps/shortlink_server/`、`HttpServer/` 数据库连接池
+
+描述：
+
+v1.4.2 第一轮 curl fallback 基线中，`POST /api/short-links` 在 `storage.type=mysql`、
+`server.thread_num=4`、`mysql.pool_size=4`、并发 16、总请求 500 的条件下出现 41.40%
+非 201 响应；`storage.type=mysql` 且 `redis.enabled=true` 时同类创建场景出现 40.40% 非 201 响应。
+内存模式同场景错误率为 0。
+
+影响：
+
+MySQL 持久化创建路径在并发场景下可能不稳定，影响短链创建接口的可靠性。当前尚未确认具体失败状态码、
+日志原因或根因。
+
+下一步：
+
+补充保留日志和状态码分布的并发创建复现脚本，确认失败响应类型；排查 MySQL repository 事务逻辑、
+数据库连接池等待/复用行为和 HTTP 请求体解析在并发 POST 下的稳定性。
+
 ## 不记录的内容
 
 - 没有复现或证据的猜测。
