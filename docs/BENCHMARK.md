@@ -1,7 +1,7 @@
 # 压测计划
 
 状态：v1.4 进行中
-当前实现：v1.4.0 已完成压测与稳定性阶段定界；v1.4.1 已新增压测脚本入口和结果记录格式；v1.4.2 已完成第一轮 curl fallback 多模式基线；hey 压测基线尚未执行
+当前实现：v1.4.0 已完成压测与稳定性阶段定界；v1.4.1 已新增压测脚本入口和结果记录格式；v1.4.2 已完成第一轮 curl fallback 多模式基线；v1.4.3 已修复 MySQL 创建路径大小写短码冲突；v1.4.4 正在补强异常场景；hey 压测基线尚未执行
 
 ## 说明
 
@@ -67,6 +67,41 @@ MySQL 持久化、Redis 查询缓存、本地 Compose 编排和第一版测试 /
 
 当前 v1.4.2 第一轮属于轻量基线。它已经暴露 MySQL 创建路径错误率和 Redis 查询缓存路径延迟异常，
 因此下一步优先解释这些异常，而不是继续盲目升压。
+
+## v1.4.4 异常场景范围
+
+v1.4.4 目标是验证依赖异常或请求异常时的服务稳定性。该阶段不追求最大 QPS，也不把异常场景结果
+解释为生产承载能力；重点是确认响应状态、错误码和进程状态可预期。
+
+### 验收口径
+
+- 服务进程不崩溃。
+- 请求不出现明显挂死；脚本需要设置请求超时。
+- 可预期的客户端错误稳定返回 4xx。
+- 依赖异常如导致 5xx，需要稳定返回统一错误响应，并记录是否需要后续优化。
+- 异常场景执行后，健康检查仍可响应，除非该场景明确验证的是服务启动失败。
+- 发现新的非预期 500、超时或进程退出时，先记录到 `docs/BUGS.md`，再决定是否在 v1.4.4 内修复。
+
+### 场景矩阵
+
+| 场景 | 模式 | 请求 | 期望 | 说明 |
+| --- | --- | --- | --- | --- |
+| Redis 不可用 | `mysql-redis` | `POST /api/short-links` | `201` | Redis 只是查询缓存，创建路径不依赖 Redis。 |
+| Redis 不可用 | `mysql-redis` | `GET /s/{code}` | `302` | Redis get/set 失败时应回源 MySQL，服务不崩溃。 |
+| MySQL 不可用 | `mysql` | `POST /api/short-links` | 稳定失败 | 记录服务是启动失败还是请求返回 `500 internal_server_error`。 |
+| MySQL 不可用 | `mysql` | `GET /api/health` | 可响应或启动失败需记录 | 先明确当前行为，不在本步承诺健康检查语义。 |
+| 非法 URL 高并发 | `memory` / `mysql` / `mysql-redis` | `POST /api/short-links` | `400 invalid_url` | 不应访问 MySQL 或 Redis。 |
+| 空 body | `memory` / `mysql` / `mysql-redis` | `POST /api/short-links` | `400 invalid_request` | 验证请求体缺失时错误响应稳定。 |
+| 非 JSON body | `memory` / `mysql` / `mysql-redis` | `POST /api/short-links` | `400 invalid_request` | 验证 JSON 解析失败路径。 |
+| 缺少 `url` 字段 | `memory` / `mysql` / `mysql-redis` | `POST /api/short-links` | `400 invalid_request` | 验证字段校验路径。 |
+| 不存在短码高并发 | `memory` / `mysql` / `mysql-redis` | `GET /s/{code}` | `404 short_link_not_found` | 验证查询未命中路径稳定。 |
+
+### 执行顺序
+
+1. 新增异常场景脚本，复用现有临时配置、临时服务和 curl 检查方式。
+2. 先跑链路验证，再跑小并发稳定性验证。
+3. 将结果写回本文档和 `docs/ROADMAP.md`。
+4. 如发现新 bug，记录到 `docs/BUGS.md` 后再进入修复小循环。
 
 ## 当前压测入口
 
