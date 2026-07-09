@@ -157,6 +157,7 @@ v1.4.5.2 分段诊断新增 `tests/scripts/redis_hiredis_segment_diagnostic.sh` 
 下一步：
 
 优先验证 Redis 连接地址 / 配置策略，例如本地 VM 配置使用 IPv6 字面地址或其他稳定的低延迟连接方式。
+v1.4.5.3 应复跑 Redis hit、Redis miss 回源、missing-code、Redis 不可用 fallback 和异常场景脚本。
 在该问题修复和复测前，不直接把当前 0.2s 固定延迟归因为缺少 Redis 连接池。
 
 ## 不记录的内容

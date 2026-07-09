@@ -156,6 +156,8 @@ redis.enabled=false
 - Nginx 容器通过 Compose 服务名 `shortlink_server` 访问业务服务。
 - `shortlink_server` 容器通过 Compose 服务名 `mysql`、`redis` 访问依赖。
 - 如果在 `haoHTTP` VM 中手工运行 `shortlink_server`，访问 OrbStack Docker 发布端口时使用 `docker.orb.internal`。
+- 如果在 `haoHTTP` VM 中做 Redis 性能诊断，`docker.orb.internal` 或显式 IPv4 可能触发本地 OrbStack 网络慢路径；
+  可用 `getent ahosts docker.orb.internal` 查看当前 IPv6 地址，并用该 IPv6 字面地址临时验证 Redis 延迟。
 - 不需要在 `haoHTTP` Linux VM 内安装 Docker。
 
 端口约定：
@@ -269,6 +271,21 @@ mysql -h docker.orb.internal -P 13306 -u hao_shortlink -phao_shortlink hao_short
   -e 'SHOW TABLES;'
 redis-cli -h docker.orb.internal -p 16379 ping
 ```
+
+在 `haoHTTP` VM 中验证 Redis 地址路径：
+
+```bash
+getent ahosts docker.orb.internal
+HAOHTTP_REDIS_HOST=<resolved-ipv6-address> \
+  HAOHTTP_REDIS_SEGMENT_REQUESTS=20 \
+  bash tests/scripts/redis_hiredis_segment_diagnostic.sh
+```
+
+说明：
+
+- `<resolved-ipv6-address>` 是当前本机 OrbStack 网络解析出的 IPv6 地址，例如 `fd07:...`。
+- 该地址属于本地开发环境，不应写死到公开默认配置或生产配置。
+- 如果 `docker.orb.internal` / IPv4 路径出现约 0.2s Redis 命令等待，优先用该诊断确认是否为本地网络路径问题。
 
 停止依赖：
 
@@ -454,6 +471,8 @@ curl -i \
 - `redis.host`、`redis.port`、`redis.database` 是否正确。
 - Redis 只是查询缓存；如果 MySQL 可用，Redis 连接失败不应导致已有短链返回 404。
 - 如果使用 Docker Compose 依赖，确认服务配置中的 `redis.host` 是 `docker.orb.internal`，`redis.port` 是 `16379`。
+- 如果功能正常但 Redis hit / missing-code 延迟稳定约 0.2s，使用 `tests/scripts/redis_hiredis_segment_diagnostic.sh`
+  对比 `docker.orb.internal`、显式 IPv4 和当前解析出的 IPv6 字面地址；当前 OrbStack VM 环境中已观察到 IPv6 路径可恢复到亚毫秒级。
 
 ### Docker Compose 依赖无法启动
 

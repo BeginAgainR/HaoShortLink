@@ -284,13 +284,13 @@ v1.4 目标是在已有测试基础上观察服务在压力和异常场景下的
    - 首轮验证中，Redis 不可用可回源 MySQL；MySQL 不可用时服务在 ready 前退出；请求异常场景返回稳定 4xx。
    - 本批次未发现新的非预期 500、超时或进程挂死；连接优化进入 v1.4.5。
 6. v1.4.5 连接与资源评估：
-   - 状态：进行中，已完成 `RedisShortLinkCache` 内部耗时分段诊断。
+   - 状态：进行中，已完成 `RedisShortLinkCache` 内部耗时分段诊断，下一步进入 Redis 连接地址策略验证。
    - 优先排查 Redis hit 和 missing-code 路径异常慢的问题，先定位服务内 Redis cache 路径固定延迟来源。
    - 新增 `tests/scripts/redis_cache_diagnostic.sh`，对比 Redis 直连命令、HTTP Redis hit / miss、missing-code 和纯 MySQL 查询路径。
    - 首轮诊断显示 Redis 直连命令和新建连接均为亚毫秒级，但 HTTP Redis hit 约 0.207s，Redis miss 回填约 0.416s，慢点集中在服务内 Redis cache 路径。
    - 新增 `tests/scripts/redis_hiredis_segment_diagnostic.sh`，分段测量 `resolve`、`redisConnectWithTimeout`、`GET` / `SETEX` / `PING`、`redisFree`，并增加 `TCP_NODELAY` 对照。
    - 分段诊断显示 `resolve`、`connect`、`free` 均为亚毫秒级；使用 `docker.orb.internal` 或显式 IPv4 时慢点集中在 hiredis 命令阶段，约 0.208s；使用 IPv6 字面地址时 HTTP Redis hit 降至约 0.0003s。
-   - 下一步优先验证 Redis 连接地址 / 配置策略，暂不直接实现 Redis 连接池。
+   - v1.4.5.3 下一步：优先验证 Redis 连接地址 / 配置策略，复跑 Redis hit、Redis miss、missing-code、Redis 不可用 fallback 和异常场景脚本，暂不直接实现 Redis 连接池。
    - MySQL 连接池参数和 worker 线程数量关系暂作为次级目标，待 Redis 路径原因明确后再评估。
    - 连接池等待超时机制只做风险记录，不在缺少证据时提前实现。
 7. v1.4.6 压测工具基线补强：
