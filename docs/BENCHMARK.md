@@ -1,7 +1,7 @@
 # 压测计划
 
 状态：v1.4 进行中
-当前实现：v1.4.0 已完成压测与稳定性阶段定界；v1.4.1 已新增压测脚本入口和结果记录格式；v1.4.2 已完成第一轮 curl fallback 多模式基线；v1.4.3 已修复 MySQL 创建路径大小写短码冲突；v1.4.4 已完成异常场景补强；hey 压测基线尚未执行
+当前实现：v1.4.0 已完成压测与稳定性阶段定界；v1.4.1 已新增压测脚本入口和结果记录格式；v1.4.2 已完成第一轮 curl fallback 多模式基线；v1.4.3 已修复 MySQL 创建路径大小写短码冲突；v1.4.4 已完成异常场景补强；v1.4.5 已进入连接与资源评估定界；hey 压测基线尚未执行
 
 ## 说明
 
@@ -235,6 +235,42 @@ bash tests/scripts/benchmark_shortlink.sh
 - 已使用 `curl` 模式完成小请求量脚本链路验证；该验证只确认脚本可运行，不作为性能基线记录。
 - `redirect-cache-hit` 会预热 Redis 后压测跳转。
 - `redirect-cache-miss` 会删除 Redis key，并强制只执行 1 个请求，用于观察单次未命中回源成本。
+
+## v1.4.5 连接与资源评估范围
+
+v1.4.5 目标是解释连接和资源使用对当前压测结果的影响，优先处理 Redis 查询缓存路径异常慢的问题。
+该阶段先做诊断，不直接预设“必须实现连接池”。
+
+### 待回答问题
+
+- Redis hit 平均延迟约 0.8s，是否主要来自每次请求新建 Redis 连接。
+- Redis missing-code 平均延迟约 0.8s，是否同样来自 Redis 连接创建或超时。
+- Redis miss 回源 MySQL 的单次成本是多少，和纯 MySQL 查询路径相比是否合理。
+- Redis 直连命令本身是否慢，还是 HTTP 服务中的 Redis 使用方式慢。
+- Redis 不可用时的 1s 连接超时是否会影响请求长尾。
+- 如果 Redis 慢的主因是连接创建，最小修复应采用连接复用还是连接池。
+- MySQL `mysql.pool_size` 与 `server.thread_num` 的关系是否需要在本阶段继续做参数矩阵。
+
+### 当前假设
+
+当前 `RedisShortLinkCache` 每次 `getOriginalUrl()` 和 `setOriginalUrl()` 都会新建 Redis TCP 连接。
+这可能解释 Redis hit 和 missing-code 路径明显慢于纯 MySQL 查询路径的现象，但 v1.4.5 仍需用诊断数据确认。
+
+### 非目标
+
+- 不在没有诊断数据时重写 Redis cache。
+- 不在本步骤实现复杂连接池。
+- 不声明生产 Redis 性能指标。
+- 不把 curl fallback 结果包装成最终性能结论。
+- 不在 Redis 路径原因明确前推进限流实现。
+
+### 执行顺序
+
+1. 新增 Redis cache 诊断入口，记录 Redis 直连命令、HTTP Redis hit、HTTP Redis miss 和 missing-code 的耗时。
+2. 在 VM 中执行诊断，记录 artifact、参数和结果。
+3. 根据诊断结果决定是否实现 Redis 连接复用或连接池。
+4. 如实现连接复用，复跑 Redis hit、Redis miss、missing-code、Redis 不可用和异常场景脚本。
+5. 更新本文档和 `docs/ROADMAP.md`，记录是否还需要 MySQL pool / worker 参数矩阵。
 
 ## 当前诊断入口
 
