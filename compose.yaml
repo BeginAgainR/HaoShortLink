@@ -46,7 +46,7 @@ services:
       - "13306:3306"
     volumes:
       - hao_shortlink_mysql_data:/var/lib/mysql
-      - ./apps/shortlink_server/sql/001_create_short_links.sql:/docker-entrypoint-initdb.d/001_create_short_links.sql:ro
+      - ./apps/shortlink_server/sql:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uhao_shortlink -phao_shortlink --silent"]
       interval: 5s

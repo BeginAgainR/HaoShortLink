@@ -1,0 +1,2 @@
+ALTER TABLE short_links
+    MODIFY code VARCHAR(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL;

@@ -172,7 +172,7 @@ Redis 容器端口 6379 -> OrbStack Docker 发布端口 16379
 - 使用 `8080` 作为 Nginx 本地统一 HTTP 入口。
 - `18080` 保留为 `shortlink_server` 直连调试入口。
 - 使用 `13306` 和 `16379` 是为了避免和本地已有 MySQL、Redis 默认端口冲突。
-- MySQL 容器第一次初始化空数据目录时，会执行 `apps/shortlink_server/sql/001_create_short_links.sql`。
+- MySQL 容器第一次初始化空数据目录时，会按文件名顺序执行 `apps/shortlink_server/sql/` 下的 SQL 脚本。
 - 如果 MySQL 数据卷已经存在，初始化 SQL 不会重复执行。
 - 开发环境用户名、密码和数据库名以 `compose.yaml` 为准。
 
@@ -334,7 +334,7 @@ redis.enabled=false
 数据库初始化脚本：
 
 ```text
-apps/shortlink_server/sql/001_create_short_links.sql
+apps/shortlink_server/sql/
 ```
 
 初始化表结构示例：
@@ -342,6 +342,7 @@ apps/shortlink_server/sql/001_create_short_links.sql
 ```bash
 ssh haoHTTP@orb
 mysql -u hao_shortlink -p hao_shortlink < /Users/hao/Code/haoHTTP/apps/shortlink_server/sql/001_create_short_links.sql
+mysql -u hao_shortlink -p hao_shortlink < /Users/hao/Code/haoHTTP/apps/shortlink_server/sql/002_make_short_link_code_case_sensitive.sql
 ```
 
 启动命令：

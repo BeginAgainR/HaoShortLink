@@ -99,6 +99,9 @@ echo "PASS: MySQL dependency reachable"
 table_count="$(mysql_cmd -N -B -e "SHOW TABLES LIKE 'short_links'" | wc -l | tr -d ' ')"
 expect_eq "${table_count}" "1" "short_links table should exist"
 
+code_collation="$(mysql_cmd -N -B -e "SELECT COLLATION_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = '${MYSQL_DATABASE}' AND TABLE_NAME = 'short_links' AND COLUMN_NAME = 'code'")"
+expect_eq "${code_collation}" "utf8mb4_bin" "short_links.code should use case-sensitive collation"
+
 redis_ping="$(redis-cli -h "${REDIS_HOST}" -p "${REDIS_PORT}" PING 2>/dev/null || true)"
 expect_eq "${redis_ping}" "PONG" "Redis should be reachable at ${REDIS_HOST}:${REDIS_PORT}"
 echo "PASS: Redis dependency reachable"

@@ -58,7 +58,7 @@ v1.1 新增 `short_links` 表，作为短链映射的事实来源。
 ```sql
 CREATE TABLE IF NOT EXISTS short_links (
     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-    code VARCHAR(32) DEFAULT NULL,
+    code VARCHAR(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL,
     original_url TEXT NOT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -74,9 +74,7 @@ CREATE TABLE IF NOT EXISTS short_links (
 - `original_url` 保存原始 URL，v1.1 不额外拆分域名或路径字段。
 - `created_at` 和 `updated_at` 用于基础审计和后续排查。
 - 暂不增加 `user_id`、`expires_at`、`status`、访问次数等字段。
-
-注意：当前表默认排序规则大小写不敏感，而 Base62 短码大小写敏感。该不一致会导致仅大小写不同的短码
-被 MySQL 唯一索引视为重复，已记录为 `BUG-004`，待修复。
+- `code` 显式使用 `utf8mb4_bin` 排序规则，使 MySQL 唯一索引与 Base62 短码的大小写敏感语义一致。
 
 ### 短码生成
 

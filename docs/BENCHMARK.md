@@ -212,6 +212,27 @@ Duplicate entry '0000Gw' for key 'short_links.uk_short_links_code'
 `utf8mb4_0900_ai_ci`，唯一索引大小写不敏感；因此 `0000GW` 与 `0000Gw` 会被 MySQL 判定为重复。
 下一步先修复数据模型或短码策略，再复跑诊断和基线。
 
+v1.4.3 修复后复测：
+
+- 修复方式：`short_links.code` 显式使用 `utf8mb4_bin`；已有表通过
+  `002_make_short_link_code_case_sensitive.sql` 迁移。
+- 诊断 artifact：`/tmp/haohttp-create-diagnostic.CJl2iG`
+
+| 场景 | 并发 | 请求数 | 201 | 非 201 | 错误率 | 结论 |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| `POST /api/short-links` | 1 | 100 | 100 | 0 | 0.00% | 修复后并发 1 通过 |
+| `POST /api/short-links` | 2 | 100 | 100 | 0 | 0.00% | 修复后并发 2 通过 |
+| `POST /api/short-links` | 4 | 100 | 100 | 0 | 0.00% | 修复后并发 4 通过 |
+| `POST /api/short-links` | 8 | 100 | 100 | 0 | 0.00% | 修复后并发 8 通过 |
+| `POST /api/short-links` | 16 | 100 | 100 | 0 | 0.00% | 修复后并发 16 通过 |
+
+核心 create 基线复测：
+
+| 场景 | 模式 | 并发 | 总请求/时长 | QPS | 平均延迟 | P95 | P99 | 错误率 | 备注 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| POST /api/short-links | mysql | 16 | 1000 requests | 1100.11 | 0.011569s | 0.017904s | 0.020231s | 0.00% | tool curl; expected 201; v1.4.3 fix |
+| POST /api/short-links | mysql-redis | 16 | 1000 requests | 1094.09 | 0.011559s | 0.025230s | 0.029734s | 0.00% | tool curl; expected 201; v1.4.3 fix |
+
 ## 计划压测场景
 
 ### 基础 HTTP
@@ -308,8 +329,8 @@ Duplicate entry '0000Gw' for key 'short_links.uk_short_links_code'
 
 后续顺序：
 
-1. 先补充 MySQL 创建短链并发失败诊断，保留状态码分布、响应体样本和服务日志，确认 BUG-004 根因。
-2. 修复或缓解 BUG-004 后，复跑 `mysql create` 和 `mysql-redis create`。
+1. BUG-004 已定位并修复，`mysql create` 和 `mysql-redis create` 复测错误率均为 0.00%。
+2. 下一步补强异常场景，覆盖 Redis 不可用、MySQL 不可用、非法请求高并发和短码不存在高并发。
 3. 再排查 Redis hit 和 missing-code 路径异常慢的问题，优先验证是否由每次请求新建 Redis 连接导致。
 4. 在创建路径稳定、Redis 路径原因明确后，再做 `server.thread_num` 和 `mysql.pool_size` 参数矩阵。
 5. 准备 `hey` 后复跑核心场景，作为更稳定的压测工具基线。
