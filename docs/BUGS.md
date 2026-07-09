@@ -70,8 +70,8 @@ callback 时传入的是原始 `req`。
 
 ## BUG-004：MySQL 创建短链并发压测存在非 201 响应
 
-状态：待排查
-范围：`apps/shortlink_server/`、`HttpServer/` 数据库连接池
+状态：已定位，待修复
+范围：`apps/shortlink_server/sql/`、`apps/shortlink_server/` MySQL 短码生成与数据模型
 
 描述：
 
@@ -80,17 +80,52 @@ v1.4.2 第一轮 curl fallback 基线中，`POST /api/short-links` 在 `storage.
 非 201 响应；`storage.type=mysql` 且 `redis.enabled=true` 时同类创建场景出现 40.40% 非 201 响应。
 内存模式同场景错误率为 0。
 
+v1.4.3 阶梯诊断结果：
+
+- 诊断入口：`tests/scripts/mysql_create_concurrency_diagnostic.sh`
+- 诊断 commit：`51dca81`
+- 请求数：每档 100
+- 并发档位：1、2、4、8、16
+- `server.thread_num=4`
+- `mysql.pool_size=4`
+- artifact：`/tmp/haohttp-create-diagnostic.96ByrP`
+
+状态码分布：
+
+| 并发 | 201 | 500 | 错误率 |
+| --- | ---: | ---: | ---: |
+| 1 | 70 | 30 | 30.00% |
+| 2 | 64 | 36 | 36.00% |
+| 4 | 58 | 42 | 42.00% |
+| 8 | 50 | 50 | 50.00% |
+| 16 | 72 | 28 | 28.00% |
+
+服务日志显示失败原因为 MySQL 唯一键冲突，例如：
+
+```text
+Duplicate entry '0000Gw' for key 'short_links.uk_short_links_code'
+```
+
+根因判断：
+
+`short_links.code` 使用 `VARCHAR(32)` 且表默认排序规则为 `utf8mb4_0900_ai_ci`，该排序规则大小写不敏感。
+当前短码生成使用大小写敏感的 Base62 字符集，因此 `0000GW` 和 `0000Gw` 在业务上是两个短码，
+但在 MySQL 唯一索引中会被视为相同值，导致回写 `code` 时触发唯一键冲突并返回 500。
+
 影响：
 
-MySQL 持久化创建路径在并发场景下可能不稳定，影响短链创建接口的可靠性。当前尚未确认具体失败状态码、
-日志原因或根因。
+MySQL 持久化创建路径在短码进入大小写相邻区间后会稳定出现创建失败；该问题不只属于高并发问题，
+并发 1 的连续创建也可复现。
 
 下一步：
 
-已新增 `tests/scripts/mysql_create_concurrency_diagnostic.sh`，用于保留日志和状态码分布；下一步执行该脚本，
-按并发 1、2、4、8、16 逐步验证失败边界，并确认失败响应类型。随后排查 MySQL repository 事务逻辑、
-数据库连接池等待/复用行为和 HTTP 请求体解析在并发 POST 下的稳定性。修复后需复跑 `mysql create` 和
-`mysql-redis create` 基线，目标是错误率回到 0。
+修复数据模型或短码策略，使 MySQL 唯一索引和业务短码比较规则一致。候选方向：
+
+- 将 `code` 列改为大小写敏感排序规则，例如 `utf8mb4_bin`。
+- 或改用大小写不敏感的短码字符集，避免生成仅大小写不同的短码。
+
+修复后需复跑 `mysql_create_concurrency_diagnostic.sh`，再复跑 `mysql create` 和 `mysql-redis create`
+基线，目标是错误率回到 0。
 
 ## 不记录的内容
 

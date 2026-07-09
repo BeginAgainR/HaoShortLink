@@ -75,6 +75,9 @@ CREATE TABLE IF NOT EXISTS short_links (
 - `created_at` 和 `updated_at` 用于基础审计和后续排查。
 - 暂不增加 `user_id`、`expires_at`、`status`、访问次数等字段。
 
+注意：当前表默认排序规则大小写不敏感，而 Base62 短码大小写敏感。该不一致会导致仅大小写不同的短码
+被 MySQL 唯一索引视为重复，已记录为 `BUG-004`，待修复。
+
 ### 短码生成
 
 v1.1 使用：

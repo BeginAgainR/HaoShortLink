@@ -185,6 +185,33 @@ bash tests/scripts/mysql_create_concurrency_diagnostic.sh
 - `HAOHTTP_CREATE_DIAG_MYSQL_POOL_SIZE=4`
 - `HAOHTTP_CREATE_DIAG_PORT=18086`
 
+v1.4.3 阶梯诊断结果：
+
+- commit：`51dca81`
+- artifact：`/tmp/haohttp-create-diagnostic.96ByrP`
+- 请求数：每档 100
+- 并发档位：1、2、4、8、16
+- `server.thread_num=4`
+- `mysql.pool_size=4`
+
+| 场景 | 并发 | 请求数 | 201 | 500 | 错误率 | 结论 |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| `POST /api/short-links` | 1 | 100 | 70 | 30 | 30.00% | 并发 1 已可复现失败 |
+| `POST /api/short-links` | 2 | 100 | 64 | 36 | 36.00% | 失败不是单纯连接池耗尽 |
+| `POST /api/short-links` | 4 | 100 | 58 | 42 | 42.00% | 错误率接近 v1.4.2 基线 |
+| `POST /api/short-links` | 8 | 100 | 50 | 50 | 50.00% | 大小写短码冲突持续出现 |
+| `POST /api/short-links` | 16 | 100 | 72 | 28 | 28.00% | 仍为 500 唯一键冲突 |
+
+服务日志中的失败原因是 MySQL 唯一键冲突：
+
+```text
+Duplicate entry '0000Gw' for key 'short_links.uk_short_links_code'
+```
+
+根因判断：`short_links.code` 采用大小写敏感 Base62 短码，但 MySQL 表默认排序规则是
+`utf8mb4_0900_ai_ci`，唯一索引大小写不敏感；因此 `0000GW` 与 `0000Gw` 会被 MySQL 判定为重复。
+下一步先修复数据模型或短码策略，再复跑诊断和基线。
+
 ## 计划压测场景
 
 ### 基础 HTTP
