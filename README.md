@@ -1,7 +1,7 @@
 # HaoShortLink
 
 HaoShortLink 是一个基于 muduo 网络库的 C++17 HTTP 框架项目，当前目标是在现有
-`HttpServer/` 框架层之上，逐步构建短链接后端服务。
+`HttpServer/` 框架层之上，逐步构建短链接后端服务，并以该业务为载体引入常见后端工程能力。
 
 ## 当前状态
 
