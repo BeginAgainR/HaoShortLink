@@ -286,6 +286,7 @@ HAOHTTP_REDIS_HOST=<resolved-ipv6-address> \
 - `<resolved-ipv6-address>` 是当前本机 OrbStack 网络解析出的 IPv6 地址，例如 `fd07:...`。
 - 该地址属于本地开发环境，不应写死到公开默认配置或生产配置。
 - 如果 `docker.orb.internal` / IPv4 路径出现约 0.2s Redis 命令等待，优先用该诊断确认是否为本地网络路径问题。
+- v1.4.5 已验证当前环境使用 IPv6 字面地址后，HTTP Redis hit 可恢复到约 0.0003s；该结论只适用于当前本地 OrbStack VM 验证路径。
 
 停止依赖：
 

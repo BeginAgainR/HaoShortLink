@@ -255,7 +255,7 @@ v1.3 目标是把当前手工验证沉淀为可重复执行的测试体系，已
 - 错误场景覆盖。
 - Nginx 入口底线验证。
 
-当前状态：进行中，已完成 v1.4.0 文档定界、v1.4.1 压测脚本入口、v1.4.2 第一轮 curl fallback 多模式基线、v1.4.3 MySQL 创建路径修复、v1.4.4 异常场景补强和 v1.4.5 Redis 慢路径分段诊断；连接池和限流实现不作为 v1.4 默认目标。
+当前状态：进行中，已完成 v1.4.0 文档定界、v1.4.1 压测脚本入口、v1.4.2 第一轮 curl fallback 多模式基线、v1.4.3 MySQL 创建路径修复、v1.4.4 异常场景补强和 v1.4.5 Redis 环境问题定性与配置策略验证；连接池和限流实现不作为 v1.4 默认目标。
 
 ### v1.4 执行批次
 
@@ -290,17 +290,18 @@ v1.4 目标是在已有测试基础上观察服务在压力和异常场景下的
    - 首轮验证中，Redis 不可用可回源 MySQL；MySQL 不可用时服务在 ready 前退出；请求异常场景返回稳定 4xx。
    - 本批次未发现新的非预期 500、超时或进程挂死；连接优化进入 v1.4.5。
 6. v1.4.5 Redis 环境问题定性与配置策略验证：
-   - 状态：进行中，已完成 `RedisShortLinkCache` 内部耗时分段诊断，下一步验证本地 VM Redis 连接地址策略。
+   - 状态：已完成。
    - 优先排查 Redis hit 和 missing-code 路径异常慢的问题，先定位服务内 Redis cache 路径固定延迟来源。
    - 新增 `tests/scripts/redis_cache_diagnostic.sh`，对比 Redis 直连命令、HTTP Redis hit / miss、missing-code 和纯 MySQL 查询路径。
    - 首轮诊断显示 Redis 直连命令和新建连接均为亚毫秒级，但 HTTP Redis hit 约 0.207s，Redis miss 回填约 0.416s，慢点集中在服务内 Redis cache 路径。
    - 新增 `tests/scripts/redis_hiredis_segment_diagnostic.sh`，分段测量 `resolve`、`redisConnectWithTimeout`、`GET` / `SETEX` / `PING`、`redisFree`，并增加 `TCP_NODELAY` 对照。
    - 分段诊断显示 `resolve`、`connect`、`free` 均为亚毫秒级；使用 `docker.orb.internal` 或显式 IPv4 时慢点集中在 hiredis 命令阶段，约 0.208s；使用 IPv6 字面地址时 HTTP Redis hit 降至约 0.0003s。
    - 将该现象定性为本地 OrbStack VM 访问 Docker Redis 发布端口的环境特定网络路径问题，不作为业务代码层面的 Redis bug。
-   - 下一步：验证本地 VM IPv6 地址策略，复跑 Redis hit、Redis miss、missing-code、Redis 不可用 fallback 和异常场景脚本，暂不直接实现 Redis 连接池。
+   - 已验证本地 VM IPv6 地址策略：HTTP Redis hit 约 0.000304s，Redis miss 回源回填约 0.000769s，missing-code 约 0.000633s，错误率均为 0.00%。
+   - Redis 不可用 fallback 和异常场景脚本均通过，地址策略不改变业务语义。
    - 容器内运行时仍优先通过 Compose 服务名 `redis:6379` 访问 Redis，不使用本地 VM IPv6 地址规避。
-   - MySQL 连接池参数和 worker 线程数量关系暂作为次级目标，待 Redis 路径原因明确后再评估。
-   - 连接池等待超时机制只做风险记录，不在缺少证据时提前实现。
+   - 当前不实现 Redis 连接池；该 0.2s 固定延迟不归因为连接池缺失。
+   - MySQL 连接池参数、worker 线程数量关系和连接池等待超时机制后置到后续证据更明确时再评估。
 7. v1.4.6 压测工具与 Nginx 入口底线验证：
    - 状态：尚未实现。
    - 准备 `hey` 压测工具，记录版本和安装方式。

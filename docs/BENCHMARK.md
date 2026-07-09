@@ -1,7 +1,7 @@
 # 压测计划
 
 状态：v1.4 进行中
-当前实现：v1.4.0 已完成压测与稳定性阶段定界；v1.4.1 已新增压测脚本入口和结果记录格式；v1.4.2 已完成第一轮 curl fallback 多模式基线；v1.4.3 已修复 MySQL 创建路径大小写短码冲突；v1.4.4 已完成异常场景补强；v1.4.5 已进入连接与资源评估定界；hey 压测基线尚未执行
+当前实现：v1.4.0 已完成压测与稳定性阶段定界；v1.4.1 已新增压测脚本入口和结果记录格式；v1.4.2 已完成第一轮 curl fallback 多模式基线；v1.4.3 已修复 MySQL 创建路径大小写短码冲突；v1.4.4 已完成异常场景补强；v1.4.5 已完成 Redis 环境问题定性与配置策略验证；hey 压测基线尚未执行
 
 ## 说明
 
@@ -410,6 +410,33 @@ v1.4.5 收口计划：
 - 如结果稳定，将本地 VM 推荐配置写入 `docs/RUNBOOK.md`；如结果不稳定，再评估连接复用、连接池、其他网络配置或换部署环境复测。
 - 本阶段不声明生产性能指标，也不把 OrbStack 本地网络现象外推到线上环境。
 - IPv6 地址策略属于本地 VM 访问 OrbStack Docker 发布端口的地址路径规避，不是业务代码层面的 Redis 修复；容器内运行时仍优先通过 Compose 服务名访问 Redis。
+
+v1.4.5 验证结果：
+
+- commit：`bdb76ba`
+- Redis IPv6：`fd07:b51a:cc66::2:16379`
+- hiredis 分段 artifact：`/tmp/haohttp-redis-segment-diagnostic.GJ3AX3`
+- Redis cache HTTP artifact：`/tmp/haohttp-redis-diagnostic.xdmv2Q`
+- 异常场景 artifact：`/tmp/haohttp-exception-scenarios.4FvNKL`
+
+| 场景 | 请求数 | 平均延迟 | P95 | P99 | 错误率 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| hiredis GET hit new connection | 100 | 0.000068s | 0.000094s | 0.000102s | 0.00% |
+| hiredis SETEX new connection | 100 | 0.000073s | 0.000101s | 0.000119s | 0.00% |
+| HTTP Redis hit | 100 | 0.000304s | 0.000427s | 0.000462s | 0.00% |
+| HTTP Redis miss with MySQL backfill | 100 | 0.000769s | 0.001042s | 0.002549s | 0.00% |
+| HTTP mysql-redis missing-code | 100 | 0.000633s | 0.000888s | 0.000929s | 0.00% |
+
+补充验证：
+
+- `tests/scripts/redis_unavailable_fallback_test.sh` 通过：Redis 不可用时创建短链成功，跳转可回源 MySQL。
+- `tests/scripts/shortlink_exception_scenarios_test.sh` 通过：Redis 不可用、MySQL 不可用、非法 URL、空 body、非 JSON、缺少 `url` 和短码不存在场景结果稳定。
+
+结论：
+
+- 本地 VM 使用 IPv6 地址访问 OrbStack Docker Redis 发布端口后，HTTP Redis hit / miss / missing-code 不再出现约 0.2s 固定延迟。
+- ENV-001 属于本地验证环境的网络路径问题，不作为业务代码 bug 或生产性能结论。
+- v1.4 不实现 Redis 连接池；连接池后续仅在新的压测证据表明需要时再评估。
 
 v1.4.6 计划：
 
