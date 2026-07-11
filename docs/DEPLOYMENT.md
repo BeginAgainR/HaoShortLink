@@ -1,12 +1,30 @@
 # 部署计划
 
-状态：占位
-当前实现：尚未开始
+状态：已建立本地方案，持续维护
+当前实现：已整理 Linux VM 手工运行说明；已新增并验证本地 Docker Compose 编排；已接入 `shortlink_server` 服务容器和 Nginx 反向代理
 
 ## 说明
 
-本文档用于后续记录 HaoShortLink 的部署方式。当前项目尚未接入 Docker Compose、Nginx、
-MySQL 或 Redis，因此本文档不提供可执行的部署步骤。
+本文档用于后续记录 HaoShortLink 的部署方式。当前项目已接入 MySQL 和可选 Redis 查询缓存，
+并新增了本地开发用 Docker Compose 编排。当前 Compose 可以在 OrbStack Docker 中启动
+MySQL、Redis、`shortlink_server` 服务容器和 Nginx 反向代理；也保留了在 `haoHTTP` Linux VM 中
+手工构建和运行 `shortlink_server` 的调试方式。当前暂不提供完整线上部署步骤。
+
+当前可用的运行方式记录在：
+
+```text
+docs/RUNBOOK.md
+```
+
+当前边界：
+
+- 支持在 Linux VM 中手工构建和运行 `shortlink_server`。
+- 支持使用内存存储、MySQL 持久化和可选 Redis 查询缓存。
+- 支持使用 OrbStack Docker Compose 启动本地 MySQL、Redis、`shortlink_server` 服务容器和 Nginx 反向代理。
+- 本地 Compose 保留 `shortlink_server` 的 `18080` 直连调试入口。
+- 生产化部署应只对外暴露 Nginx 的 80/443 入口，后端服务和数据库缓存只在内部网络可见。
+- HTTPS/TLS 终止计划由 Nginx 配置承接，当前尚未实现。
+- 尚未定义线上发布、回滚、日志采集或监控方案。
 
 ## 后续内容
 
@@ -16,17 +34,26 @@ MySQL 或 Redis，因此本文档不提供可执行的部署步骤。
 - 构建方式。
 - 服务启动方式。
 - 配置文件说明。
-- Docker Compose 配置。
-- Nginx 反向代理配置。
+- 生产化端口暴露策略。
+- Nginx HTTPS/TLS 配置。
 - MySQL 和 Redis 依赖说明。
 - 日志和故障排查。
+
+## v1.2 拆分建议
+
+v1.2 建议继续按小步推进：
+
+1. 整理运行配置和运行手册。
+2. 增加 MySQL、Redis 的本地 Docker Compose 依赖编排。
+3. 增加服务 Dockerfile。
+4. 增加 Nginx 反向代理配置。
+5. 更新部署验证记录。
 
 ## 当前不声明
 
 当前不声明以下能力已经可用：
 
-- 容器化部署。
-- Nginx 接入。
-- MySQL 接入。
-- Redis 接入。
+- 完整线上容器化部署。
+- HTTPS/TLS 终止。
+- Redis 限流。
 - 线上运行方案。

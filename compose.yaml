@@ -1,0 +1,73 @@
+name: hao-shortlink-dev
+
+services:
+  nginx:
+    image: ${SHORTLINK_NGINX_IMAGE:-nginx:alpine}
+    container_name: hao-shortlink-nginx
+    depends_on:
+      shortlink_server:
+        condition: service_healthy
+    ports:
+      - "8080:80"
+    volumes:
+      - ./deploy/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/api/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  shortlink_server:
+    image: ${SHORTLINK_SERVER_IMAGE:-hao-shortlink-server:dev}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        BASE_IMAGE: ${SHORTLINK_SERVER_BASE_IMAGE:-ubuntu:22.04}
+        MUDUO_TARBALL_URL: ${SHORTLINK_MUDUO_TARBALL_URL:-https://github.com/chenshuo/muduo/archive/f1fc77e0c13b80e5086ff457362c8a86d1b609d4.tar.gz}
+    container_name: hao-shortlink-server
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "18080:8080"
+
+  mysql:
+    image: ${SHORTLINK_MYSQL_IMAGE:-mysql:8.0}
+    container_name: hao-shortlink-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: hao_shortlink_root
+      MYSQL_DATABASE: hao_shortlink
+      MYSQL_USER: hao_shortlink
+      MYSQL_PASSWORD: hao_shortlink
+    ports:
+      - "13306:3306"
+    volumes:
+      - hao_shortlink_mysql_data:/var/lib/mysql
+      - ./apps/shortlink_server/sql:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uhao_shortlink -phao_shortlink --silent"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 20s
+
+  redis:
+    image: ${SHORTLINK_REDIS_IMAGE:-redis:7-alpine}
+    container_name: hao-shortlink-redis
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "16379:6379"
+    volumes:
+      - hao_shortlink_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  hao_shortlink_mysql_data:
+  hao_shortlink_redis_data:

@@ -1,5 +1,9 @@
 #pragma once
 
+#include <cstdint>
+#include <map>
+#include <string>
+
 #include <muduo/net/TcpServer.h>
 
 namespace http
@@ -12,8 +16,10 @@ public:
     {
         kUnknown,
         k200Ok = 200,
+        k201Created = 201,
         k204NoContent = 204,
         k301MovedPermanently = 301,
+        k302Found = 302,
         k400BadRequest = 400,
         k401Unauthorized = 401,
         k403Forbidden = 403,
@@ -23,8 +29,10 @@ public:
     };
 
     HttpResponse(bool close = true)
-        : statusCode_(kUnknown)
+        : httpVersion_("HTTP/1.1")
+        , statusCode_(kUnknown)
         , closeConnection_(close)
+        , isFile_(false)
     {}
 
     void setVersion(std::string version)
@@ -58,6 +66,12 @@ public:
         body_ = body;
         // body_ += "\0";
     }
+
+    void setJsonBody(const std::string& body);
+    void setErrorResponse(HttpStatusCode statusCode,
+                          const std::string& errorCode,
+                          const std::string& message);
+    void setRedirect(const std::string& location);
 
     void setStatusLine(const std::string& version,
                          HttpStatusCode statusCode,

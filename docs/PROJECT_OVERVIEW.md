@@ -1,20 +1,29 @@
 # 项目概览
 
-状态：草案
-当前实现：短链接业务尚未实现
+状态：已建立基础版，持续维护
+当前实现：已实现健康检查、创建短链接、短码跳转、MySQL 持久化、可选 Redis 查询缓存和本地 Docker Compose 运行方式；v1.3 已完成第一版自动化测试和 CI，v1.4 已完成性能与稳定性基线
 
 ## 项目定位
 
 HaoShortLink 是一个基于 muduo 网络库的 C++17 HTTP 框架项目。当前目标是在保持
-`HttpServer/` 框架层稳定的基础上，在上层逐步构建短链接后端服务。
+`HttpServer/` 框架层稳定的基础上，在上层逐步构建短链接后端服务，并以短链接业务为载体
+引入持久化、缓存、反向代理、测试、压测、可观测性、限流和消息队列等常见后端工程能力。
 
 ## 当前状态
 
 - 旧五子棋业务代码已经清理。
 - `HttpServer/` 保留为现有 HTTP 框架层，暂时不重命名。
 - `apps/shortlink_server/` 是新的短链接业务服务目录。
-- 短链接业务逻辑、API、持久化、缓存和部署方案尚未实现。
-- 当前阶段重点是建立公开文档体系、明确项目边界和后续开发顺序。
+- `apps/shortlink_server/` 已实现健康检查、创建短链接和短码跳转。
+- 短链接存储支持内存版和 MySQL 版。
+- MySQL 版支持可选 Redis 查询缓存。
+- 已完成本地 Docker Compose 验证，可启动 MySQL、Redis、`shortlink_server` 和 Nginx。
+- v1.3 已完成第一版测试与 CI 收口，包含第一批 CTest、API 冒烟测试、MySQL / Redis 集成测试脚本和 CI 第一版 workflow。
+- CI 第一版核心命令链路已在 Linux VM 中验证，GitHub Actions 云端 CI 已通过。
+- v1.4 已完成 curl / `hey` 多模式基线、关键异常场景、Redis 环境问题定性和 Nginx 入口底线验证。
+- 完整部署方案尚未实现。
+- 已完成请求日志、统一 JSON 错误响应、JSON 响应辅助和配置加载等框架基础能力。
+- MySQL / Redis 依赖集成 CI 已完成前置版；下一阶段重点是 v1.5 可观测性建设。
 
 ## 目录结构
 
@@ -32,19 +41,22 @@ apps/
     sql/                    数据库脚本预留目录
 
 docs/                       公开项目文档
+deploy/nginx/               Nginx 本地反向代理配置
+tests/                      自动化测试和测试脚本
+.github/workflows/          GitHub Actions workflow
 ```
 
 ## 当前不包含的能力
 
 以下能力尚未实现，不应在公开文档中描述为已完成：
 
-- 短链接创建和跳转业务
-- MySQL 持久化
-- Redis 缓存或限流
-- Docker Compose
-- Nginx
+- Redis 限流
+- 指标监控
 - 消息队列
-- 监控和告警
+- 访问统计
+- 用户系统
+- 后台管理
+- 告警策略
 
 ## 文档维护原则
 

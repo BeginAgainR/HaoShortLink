@@ -4,14 +4,56 @@
 #include <functional>
 #include <memory>
 
+#include <muduo/base/Timestamp.h>
+
 namespace http
 {
+
+namespace
+{
+
+const char* methodToString(HttpRequest::Method method)
+{
+    switch (method)
+    {
+    case HttpRequest::kGet:
+        return "GET";
+    case HttpRequest::kPost:
+        return "POST";
+    case HttpRequest::kHead:
+        return "HEAD";
+    case HttpRequest::kPut:
+        return "PUT";
+    case HttpRequest::kDelete:
+        return "DELETE";
+    case HttpRequest::kOptions:
+        return "OPTIONS";
+    case HttpRequest::kInvalid:
+    default:
+        return "INVALID";
+    }
+}
+
+void sendErrorResponse(const muduo::net::TcpConnectionPtr& conn,
+                       HttpResponse::HttpStatusCode statusCode,
+                       const std::string& errorCode,
+                       const std::string& message)
+{
+    HttpResponse response;
+    response.setErrorResponse(statusCode, errorCode, message);
+
+    muduo::net::Buffer buf;
+    response.appendToBuffer(&buf);
+    conn->send(&buf);
+    conn->shutdown();
+}
+
+} // namespace
 
 // 默认http回应函数
 void defaultHttpCallback(const HttpRequest &, HttpResponse *resp)
 {
-    resp->setStatusCode(HttpResponse::k404NotFound);
-    resp->setStatusMessage("Not Found");
+    resp->setErrorResponse(HttpResponse::k404NotFound, "not_found", "Not Found");
     resp->setCloseConnection(true);
 }
 
@@ -123,8 +165,7 @@ void HttpServer::onMessage(const muduo::net::TcpConnectionPtr &conn,
         if (!context->parseRequest(buf, receiveTime)) // 解析一个http请求
         {
             // 如果解析http报文过程中出错
-            conn->send("HTTP/1.1 400 Bad Request\r\n\r\n");
-            conn->shutdown();
+            sendErrorResponse(conn, HttpResponse::k400BadRequest, "bad_request", "Bad Request");
         }
         // 如果buf缓冲区中解析出一个完整的数据包才封装响应报文
         if (context->gotAll())
@@ -137,13 +178,13 @@ void HttpServer::onMessage(const muduo::net::TcpConnectionPtr &conn,
     {
         // 捕获异常，返回错误信息
         LOG_ERROR << "Exception in onMessage: " << e.what();
-        conn->send("HTTP/1.1 400 Bad Request\r\n\r\n");
-        conn->shutdown();
+        sendErrorResponse(conn, HttpResponse::k400BadRequest, "bad_request", "Bad Request");
     }
 }
 
 void HttpServer::onRequest(const muduo::net::TcpConnectionPtr &conn, const HttpRequest &req)
 {
+    const muduo::Timestamp startTime = muduo::Timestamp::now();
     const std::string &connection = req.getHeader("Connection");
     bool close = ((connection == "close") ||
                   (req.getVersion() == "HTTP/1.0" && connection != "Keep-Alive"));
@@ -155,8 +196,12 @@ void HttpServer::onRequest(const muduo::net::TcpConnectionPtr &conn, const HttpR
     // 可以给response设置一个成员，判断是否请求的是文件，如果是文件设置为true，并且存在文件位置在这里send出去。
     muduo::net::Buffer buf;
     response.appendToBuffer(&buf);
+    const double elapsedMs = muduo::timeDifference(muduo::Timestamp::now(), startTime) * 1000.0;
+    LOG_INFO << "Request " << methodToString(req.method()) << " " << req.path()
+             << " -> " << static_cast<int>(response.getStatusCode())
+             << " " << elapsedMs << "ms";
     // 打印完整的响应内容用于调试
-    LOG_INFO << "Sending response:\n" << buf.toStringPiece().as_string();
+    LOG_DEBUG << "Sending response:\n" << buf.toStringPiece().as_string();
 
     conn->send(&buf);
     // 如果是短连接的话，返回响应报文后就断开连接
@@ -180,8 +225,7 @@ void HttpServer::handleRequest(const HttpRequest &req, HttpResponse *resp)
         {
             LOG_INFO << "请求的啥，url：" << req.method() << " " << req.path();
             LOG_INFO << "未找到路由，返回404";
-            resp->setStatusCode(HttpResponse::k404NotFound);
-            resp->setStatusMessage("Not Found");
+            resp->setErrorResponse(HttpResponse::k404NotFound, "not_found", "Not Found");
             resp->setCloseConnection(true);
         }
 
@@ -196,8 +240,9 @@ void HttpServer::handleRequest(const HttpRequest &req, HttpResponse *resp)
     catch (const std::exception& e) 
     {
         // 错误处理
-        resp->setStatusCode(HttpResponse::k500InternalServerError);
-        resp->setBody(e.what());
+        resp->setErrorResponse(HttpResponse::k500InternalServerError,
+                               "internal_server_error",
+                               "Internal Server Error");
     }
 }
 
