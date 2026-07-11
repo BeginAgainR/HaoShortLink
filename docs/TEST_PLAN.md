@@ -32,44 +32,44 @@ v1.3 的目标是把当前手工验证沉淀为可重复执行的测试体系，
    - 已完成 Redis 不可用回退 MySQL 脚本。
    - 已完成 Compose 依赖编排脚本。
    - 覆盖 MySQL 持久化、Redis 未命中回源、Redis 回填和 Redis 不可用回退。
-   - 依赖 Docker Compose，适合作为阶段收口或 CI 后续增强项。
+   - 依赖 Docker Compose，当前 CI 增强已加入该回归入口。
 7. CI：
    - 状态：已完成第一版 workflow，核心命令链路已在 Linux VM 中验证，GitHub Actions 云端 CI 已通过。
-   - 第一版先做 Linux 构建、CTest 和 API 冒烟测试。
-   - 后续再接入 Compose 集成测试。
+   - 第一版覆盖 Linux 构建、CTest 和 API 冒烟测试。
+   - 当前增强增加 Bash 语法检查、MySQL / Redis Compose 集成和 Redis 不可用 fallback。
 
-## CI 第一版方案
+## CI 当前方案
 
-第一版 CI 目标是把当前最核心、最稳定的手工验证流程搬到远端 Linux 环境中自动执行。
+当前 CI 在第一版 Linux 构建、CTest 和 API smoke 基础上，增加脚本语法与 MySQL / Redis 依赖集成验证。
 
 当前 workflow：`.github/workflows/ci.yml`。
 
-触发范围（当前第一版）：
+触发范围：
 
-- 推送到主线分支或当前 `refactor/v1.3-tests-ci` 开发分支时执行；分支过滤将在后续 CI 清理中改为通用规则。
+- 推送到主线分支、`refactor/**` 或 `feature/**` 开发分支时执行。
 - 发起 pull request 时执行。
 
-第一版覆盖：
+当前覆盖：
 
 - 安装 C++ 构建依赖和运行测试所需工具。
 - 准备 `muduo_base` 和 `muduo_net`。
 - 执行 CMake 配置和构建。
 - 执行 CTest，覆盖框架基础测试和短链业务纯逻辑测试。
 - 执行 API 冒烟测试，使用内存存储模式验证健康检查、创建短链、短码跳转和基础错误响应。
+- 检查 `tests/scripts/*.sh` 的 Bash 语法。
+- 通过 Docker Compose 启动 MySQL、Redis，执行持久化、缓存回填和 Redis 不可用 fallback 测试。
 - muduo 构建命令兼容新版 CMake 对旧项目最低版本策略的检查。
 
-第一版暂不覆盖：
+当前暂不覆盖：
 
-- MySQL / Redis Compose 集成测试。
-- Redis 不可用回退测试。
 - Nginx 反向代理验证。
 - 压测、限流和可观测性验证。
 
-暂不把 Compose 集成测试放入第一版 CI 的原因：
+依赖集成 CI 边界：
 
-- 该类测试依赖 Docker Compose、镜像拉取、数据库健康检查和缓存服务状态，失败原因更多。
-- 第一版 CI 先保证代码能在干净 Linux 环境构建，并保证基础测试和核心 HTTP 闭环可重复执行。
-- MySQL / Redis 集成测试后续适合作为单独 job 增强，避免影响基础 CI 的稳定性和排障效率。
+- GitHub runner 使用 `127.0.0.1` 访问 Compose 发布端口，不使用 OrbStack 的 `docker.orb.internal` 或 IPv6 规避地址。
+- 失败时输出 MySQL / Redis 容器日志，结束时清理容器和临时数据卷。
+- 当前不把环境敏感的性能基线作为 PR 硬门禁。
 
 ## 当前测试入口
 

@@ -5,7 +5,8 @@ on:
     branches:
       - main
       - master
-      - refactor/v1.3-tests-ci
+      - "refactor/**"
+      - "feature/**"
   pull_request:
 
 permissions:
@@ -22,7 +23,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install system dependencies
         run: |
@@ -36,7 +37,15 @@ jobs:
             libssl-dev \
             libmysqlclient-dev \
             libmysqlcppconn-dev \
-            libhiredis-dev
+            libhiredis-dev \
+            default-mysql-client \
+            redis-tools
+
+      - name: Check shell script syntax
+        run: |
+          for script in tests/scripts/*.sh; do
+            bash -n "${script}"
+          done
 
       - name: Build and install muduo core libraries
         run: |
@@ -64,3 +73,19 @@ jobs:
 
       - name: Run API smoke test
         run: bash tests/scripts/api_smoke_test.sh
+
+      - name: Run MySQL and Redis integration tests
+        env:
+          HAOHTTP_MYSQL_HOST: 127.0.0.1
+          HAOHTTP_REDIS_HOST: 127.0.0.1
+          SHORTLINK_MYSQL_IMAGE: mysql:8.0
+          SHORTLINK_REDIS_IMAGE: redis:7-alpine
+        run: bash tests/scripts/run_integration_with_compose.sh
+
+      - name: Show dependency logs on failure
+        if: failure()
+        run: docker compose logs mysql redis
+
+      - name: Stop dependency containers
+        if: always()
+        run: docker compose down --volumes --remove-orphans
