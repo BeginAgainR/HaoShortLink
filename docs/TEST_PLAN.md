@@ -1,7 +1,7 @@
 # 测试计划
 
 状态：持续维护；当前基线为 v1.4 全量回归通过
-当前实现：已建立框架与业务基础测试、API 冒烟、MySQL / Redis 集成、Redis 不可用回退、异常场景和 Compose 编排入口；CI 第一版已通过，v1.4.7 全量回归已完成。
+当前实现：已建立框架与业务基础测试、API 冒烟、MySQL / Redis 集成、Redis 不可用回退、异常场景和 Compose 编排入口；增强后的 CI 已通过构建、CTest、API smoke、脚本语法和依赖集成验证，v1.4.7 全量回归已完成。
 
 ## v1.3 执行顺序
 
@@ -70,6 +70,12 @@ v1.3 的目标是把当前手工验证沉淀为可重复执行的测试体系，
 - GitHub runner 使用 `127.0.0.1` 访问 Compose 发布端口，不使用 OrbStack 的 `docker.orb.internal` 或 IPv6 规避地址。
 - 失败时输出 MySQL / Redis 容器日志，结束时清理容器和临时数据卷。
 - 当前不把环境敏感的性能基线作为 PR 硬门禁。
+
+最近一次增强 CI 验证：
+
+- commit：`6170d40`。
+- GitHub Actions run：`29138145564`。
+- 结果：checkout v7、Shell 语法、Linux 构建、CTest、API smoke、MySQL / Redis 集成和 Redis 不可用 fallback 全部通过。
 
 ## 当前测试入口
 

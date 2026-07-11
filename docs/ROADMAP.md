@@ -374,8 +374,9 @@ v1.5 目标是让服务运行状态可观察、可排查，并把已经稳定的
    - 状态：尚未实现。
    - 增加 Prometheus 和 Grafana 本地编排与最小 dashboard。
 5. 依赖 CI：
-   - 状态：尚未实现。
-   - 将现有 MySQL / Redis 集成和 Redis 不可用 fallback 脚本接入独立 CI 检查。
+   - 状态：已完成前置版。
+   - 现有 MySQL / Redis 集成和 Redis 不可用 fallback 脚本已接入 GitHub Actions。
+   - CI 使用 `127.0.0.1` 访问 Compose 发布端口，失败时输出依赖日志，结束时清理临时数据卷。
    - CI 暂不执行性能基线，也不把本地 OrbStack 地址策略带入 GitHub runner。
 
 ## 阶段 8：可靠性与流量保护
