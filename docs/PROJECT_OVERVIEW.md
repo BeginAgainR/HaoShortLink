@@ -1,7 +1,7 @@
 # 项目概览
 
 状态：草案
-当前实现：已实现健康检查、创建短链接、短码跳转、MySQL 持久化、可选 Redis 查询缓存、本地 Docker Compose 运行方式，v1.3 已完成第一版自动化测试和 CI 收口
+当前实现：已实现健康检查、创建短链接、短码跳转、MySQL 持久化、可选 Redis 查询缓存和本地 Docker Compose 运行方式；v1.3 已完成第一版自动化测试和 CI，v1.4 已完成性能与稳定性基线
 
 ## 项目定位
 
@@ -20,9 +20,10 @@ HaoShortLink 是一个基于 muduo 网络库的 C++17 HTTP 框架项目。当前
 - 已完成本地 Docker Compose 验证，可启动 MySQL、Redis、`shortlink_server` 和 Nginx。
 - v1.3 已完成第一版测试与 CI 收口，包含第一批 CTest、API 冒烟测试、MySQL / Redis 集成测试脚本和 CI 第一版 workflow。
 - CI 第一版核心命令链路已在 Linux VM 中验证，GitHub Actions 云端 CI 已通过。
+- v1.4 已完成 curl / `hey` 多模式基线、关键异常场景、Redis 环境问题定性和 Nginx 入口底线验证。
 - 完整部署方案尚未实现。
 - 已完成请求日志、统一 JSON 错误响应、JSON 响应辅助和配置加载等框架基础能力。
-- 下一阶段重点是性能稳定性、可观测性和后端基础设施能力建设。
+- 下一阶段重点是 v1.5 可观测性建设。
 
 ## 目录结构
 
@@ -50,7 +51,6 @@ tests/                      自动化测试和测试脚本
 以下能力尚未实现，不应在公开文档中描述为已完成：
 
 - Redis 限流
-- 压测
 - 指标监控
 - 消息队列
 - 访问统计

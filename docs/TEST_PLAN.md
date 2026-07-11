@@ -1,7 +1,7 @@
 # 测试计划
 
 状态：v1.3 已完成，后续持续维护
-当前实现：已建立最小测试骨架；已补充第一批框架基础测试、短链业务纯逻辑测试、API 冒烟测试脚本、MySQL / Redis 集成测试脚本、Redis 不可用回退测试脚本和 Compose 依赖编排脚本；CI 第一版 workflow 已新增，已在 Linux VM 中验证核心命令链路，并已通过 GitHub Actions 云端 CI。
+当前实现：已建立框架与业务基础测试、API 冒烟、MySQL / Redis 集成、Redis 不可用回退、异常场景和 Compose 编排入口；CI 第一版已通过，v1.4.7 全量回归已完成。
 
 ## v1.3 执行顺序
 
@@ -95,17 +95,17 @@ HAOHTTP_TEST_HOST=haoHTTP@orb bash tests/scripts/run_integration_with_compose.sh
 
 当前状态：已通过 Linux VM 构建验证、v1.1 干净克隆验证、v1.2 本地干净克隆 Compose 验证、
 v1.3 最小测试骨架验证、第一批框架基础测试验证、短链业务纯逻辑测试验证、API 冒烟测试验证、
-MySQL / Redis 集成测试验证、Redis 不可用回退测试验证、Compose 依赖编排验证、CI 第一版核心命令链路验证和 GitHub Actions 云端 CI 验证。
+MySQL / Redis 集成测试验证、Redis 不可用回退测试验证、Compose 依赖编排验证、CI 第一版核心命令链路验证、GitHub Actions 云端 CI 验证和 v1.4.7 全量回归验证。
 
 最近一次验证：
 
 - 环境：OrbStack Linux VM `haoHTTP`
-- 类型：v1.3 收口验证、CI 第一版核心命令链路验证和 GitHub Actions 云端 CI 验证
+- 类型：v1.4.7 全量回归验证
 - 分支：`refactor/v1.3-tests-ci`
 - 项目路径：`/Users/hao/Code/haoHTTP`
 - 构建目录：`/tmp/haoHTTP-build`
-- 命令：`cmake -S . -B /tmp/haoHTTP-build -DCMAKE_BUILD_TYPE=Release && cmake --build /tmp/haoHTTP-build && ctest --test-dir /tmp/haoHTTP-build --output-on-failure && bash tests/scripts/api_smoke_test.sh`
-- 结果：Linux VM 中 `shortlink_server` 构建通过，`hao_shortlink_tests` 通过，API 冒烟测试通过；GitHub Actions 云端 CI 通过
+- 命令：Linux VM 中执行构建、CTest、`api_smoke_test.sh` 和 `shortlink_exception_scenarios_test.sh`；Mac 侧通过 `HAOHTTP_TEST_HOST=haoHTTP@orb bash tests/scripts/run_integration_with_compose.sh` 编排依赖并执行集成与 fallback 测试。
+- 结果：Linux VM 中 `shortlink_server` 构建通过，CTest `1/1`、API smoke、MySQL / Redis 集成、Redis 不可用 fallback 和异常场景脚本均通过；独立干净克隆目录为 `/tmp/haoHTTP-v1.4-clean.fjetXo`，异常场景 artifact 为 `/tmp/haohttp-exception-scenarios.EUZdzv`
 
 补充验证：
 
@@ -150,7 +150,7 @@ MySQL / Redis 自动化集成测试脚本、Redis 不可用回退测试脚本和
 
 - 验证吞吐、延迟和稳定性。
 
-当前状态：后置。
+当前状态：v1.4 已完成 curl fallback 和 `hey` 多模式轻量基线；不声明生产承载能力。
 
 ## 当前阶段检查项
 
