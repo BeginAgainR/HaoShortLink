@@ -1,7 +1,7 @@
 # 压测计划
 
 状态：v1.4 进行中
-当前实现：v1.4.0 已完成压测与稳定性阶段定界；v1.4.1 已新增压测脚本入口和结果记录格式；v1.4.2 已完成第一轮 curl fallback 多模式基线；v1.4.3 已修复 MySQL 创建路径大小写短码冲突；v1.4.4 已完成异常场景补强；v1.4.5 已完成 Redis 环境问题定性与配置策略验证；hey 压测基线尚未执行
+当前实现：v1.4.0 已完成压测与稳定性阶段定界；v1.4.1 已新增压测脚本入口和结果记录格式；v1.4.2 已完成第一轮 curl fallback 多模式基线；v1.4.3 已修复 MySQL 创建路径大小写短码冲突；v1.4.4 已完成异常场景补强；v1.4.5 已完成 Redis 环境问题定性与配置策略验证；v1.4.6 已完成 `hey` 核心小基线和 Nginx 入口底线验证
 
 ## 说明
 
@@ -214,6 +214,7 @@ bash tests/scripts/benchmark_shortlink.sh
 - `HAOHTTP_BENCH_TOOL`
 - `HAOHTTP_HEY_BIN`
 - `HAOHTTP_BENCH_PORT`
+- `HAOHTTP_BENCH_BASE_URL`
 - `HAOHTTP_BENCH_THREAD_NUM`
 - `HAOHTTP_BENCH_MYSQL_POOL_SIZE`
 - `HAOHTTP_BENCH_REQUESTS`
@@ -233,7 +234,9 @@ bash tests/scripts/benchmark_shortlink.sh
 
 - 已完成脚本 Bash 语法检查。
 - 已完成脚本 `--help` 输出验证。
-- 当前本地和 `haoHTTP` VM 尚未安装 `hey`；脚本会自动回退到 `curl` 模式。
+- `haoHTTP` VM 已安装 `hey v0.1.5`；其他环境未安装时脚本仍会自动回退到 `curl` 模式。
+- `hey` 使用 CSV 原始输出计算 QPS、平均延迟、P95、P99 和状态码分布，不依赖摘要展示格式。
+- 可通过 `HAOHTTP_BENCH_BASE_URL` 压测已运行的服务或 Nginx 入口；未设置时仍自动启动临时 `shortlink_server`。
 - 已使用 `curl` 模式完成小请求量脚本链路验证；该验证只确认脚本可运行，不作为性能基线记录。
 - `redirect-cache-hit` 会预热 Redis 后压测跳转。
 - `redirect-cache-miss` 会删除 Redis key，并强制只执行 1 个请求，用于观察单次未命中回源成本。
@@ -438,12 +441,48 @@ v1.4.5 验证结果：
 - ENV-001 属于本地验证环境的网络路径问题，不作为业务代码 bug 或生产性能结论。
 - v1.4 不实现 Redis 连接池；连接池后续仅在新的压测证据表明需要时再评估。
 
-v1.4.6 计划：
+v1.4.6 验证结果：
 
-- 准备 `hey` 压测工具，记录版本和安装方式。
-- 使用 `hey` 对 `shortlink_server` 直连入口复跑核心小基线，覆盖 health、create、redirect、Redis hit、Redis miss、missing-code 和 invalid-url。
-- 补充 Nginx 入口 smoke 或小基线，确认 `client -> Nginx -> shortlink_server` 链路仍可用。
-- 记录 QPS、平均延迟、P95、P99 和错误率；不做极限压测，不声明生产承载能力。
+- 环境：OrbStack Linux VM `haoHTTP`，Linux arm64。
+- 工具：`hey v0.1.5`，使用 Ubuntu `golang-go` 提供的 Go 1.26.0，通过 `GOBIN="$HOME/.local/bin" go install github.com/rakyll/hey@v0.1.5` 安装。
+- commit：`5cebf70` 加当前未提交的压测脚本改动。
+- 常规场景：并发 16，总请求 1000；Redis miss 只执行 1 个请求。
+- `server.thread_num=4`，`mysql.pool_size=4`。
+- VM 手工运行时 Redis 使用本环境 IPv6 对照地址；Compose 容器内仍使用 `redis:6379`。
+
+直连代表结果：
+
+| 场景 | 模式 | 并发 | 请求数 | QPS | 平均延迟 | P95 | P99 | 错误率 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| GET /api/health | memory | 16 | 1000 | 57674.42 | 0.000216s | 0.0013s | 0.0023s | 0.00% |
+| POST /api/short-links | memory | 16 | 1000 | 56045.20 | 0.000262s | 0.0016s | 0.0032s | 0.00% |
+| POST /api/short-links | mysql | 16 | 1000 | 1270.17 | 0.011369s | 0.0240s | 0.0373s | 0.00% |
+| GET /s/{code} | memory | 16 | 1000 | 70857.14 | 0.000204s | 0.0011s | 0.0031s | 0.00% |
+| GET /s/{code} | mysql | 16 | 1000 | 9668.62 | 0.001509s | 0.0042s | 0.0085s | 0.00% |
+| GET /s/{code} Redis hit | mysql-redis | 16 | 1000 | 19604.74 | 0.000748s | 0.0014s | 0.0026s | 0.00% |
+| GET /s/{code} Redis miss | mysql-redis | 1 | 1 | 1000.00 | 0.001000s | 0.0010s | 0.0010s | 0.00% |
+| POST invalid URL | memory | 16 | 1000 | 49353.23 | 0.000255s | 0.0017s | 0.0027s | 0.00% |
+| GET missing short code | mysql-redis | 16 | 1000 | 8817.78 | 0.001586s | 0.0029s | 0.0038s | 0.00% |
+
+Nginx 入口验证使用当前工作区重新构建 `hao-shortlink-server:dev`，由 VM 客户端访问 OrbStack Docker 发布的 Nginx `8080` 端口。`docker.orb.internal` 在并发 `hey` 下再次出现约 0.21s P95；改用当前环境 IPv6 字面地址后结果如下：
+
+| 场景 | 模式 | 并发 | 请求数 | QPS | 平均延迟 | P95 | P99 | 错误率 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| GET /api/health | mysql-redis | 16 | 1000 | 16957.26 | 0.000898s | 0.0025s | 0.0041s | 0.00% |
+| POST /api/short-links | mysql-redis | 16 | 1000 | 1715.67 | 0.008783s | 0.0190s | 0.0227s | 0.00% |
+| GET /s/{code} | mysql-redis | 16 | 1000 | 13589.04 | 0.001141s | 0.0027s | 0.0033s | 0.00% |
+| GET /s/{code} Redis hit | mysql-redis | 16 | 1000 | 12353.67 | 0.001239s | 0.0031s | 0.0042s | 0.00% |
+| GET /s/{code} Redis miss | mysql-redis | 1 | 1 | 1111.11 | 0.000900s | 0.0009s | 0.0009s | 0.00% |
+| POST invalid URL | mysql-redis | 16 | 1000 | 22142.86 | 0.000644s | 0.0016s | 0.0029s | 0.00% |
+| GET missing short code | mysql-redis | 16 | 1000 | 9910.09 | 0.001549s | 0.0030s | 0.0042s | 0.00% |
+
+结论：
+
+- 直连和 Nginx IPv6 入口覆盖的核心场景均无错误，Nginx 反向代理底线成立。
+- `hey` 基线确认 BUG-004 修复有效，MySQL 创建路径在本轮 1000 请求中无非 201 响应。
+- Redis hit 明显快于纯 MySQL redirect，但该结果只用于当前环境的相对比较。
+- Nginx 入口存在可测量开销，但本轮不做极限压测，也不声明生产最大承载能力。
+- VM 到 Docker 发布端口的地址选择仍会显著影响结果，后续本地基线必须记录并固定访问地址。
 
 v1.4.7 计划：
 
@@ -618,15 +657,15 @@ v1.4.3 修复后复测：
 - MySQL + Redis 模式的创建短链同样出现约 40% 错误率，说明问题更可能在 MySQL 创建路径或并发资源管理，而不是 Redis 查询缓存。
 - Redis hit 和 Redis missing-code 场景 QPS 约为 19，平均延迟约 0.8s，明显慢于纯 MySQL 查询路径；当前 Redis cache 实现每次 get/set 都新建连接，是后续重点排查方向。
 - Redis miss 单次请求约 0.41s，只作为单次未命中回源观察，不适合和 500 请求场景直接比较。
-- curl fallback 本身会创建大量本地 curl 进程，结果适合做项目内相对比较；正式性能结论仍建议补充 `hey` 基线。
+- curl fallback 本身会创建大量本地 curl 进程，该轮结果只适合做项目内相对比较；v1.4.6 已补充 `hey` 小基线。
 
 后续顺序：
 
 1. BUG-004 已定位并修复，`mysql create` 和 `mysql-redis create` 复测错误率均为 0.00%。
 2. v1.4.4 异常场景补强已完成，未发现新的非预期 500、超时或进程挂死。
-3. 下一步排查 Redis hit 和 missing-code 路径异常慢的问题，优先验证是否由每次请求新建 Redis 连接导致。
-4. 在创建路径稳定、Redis 路径原因明确后，再做 `server.thread_num` 和 `mysql.pool_size` 参数矩阵。
-5. 准备 `hey` 后复跑核心场景，作为更稳定的压测工具基线。
+3. v1.4.5 已将 Redis 固定延迟定性为本地 VM 到 Docker 发布端口的地址路径问题，并验证 IPv6 规避策略。
+4. v1.4.6 已完成 `hey` 核心小基线和 Nginx 入口底线验证，覆盖场景错误率均为 0.00%。
+5. 下一步进入 v1.4.7 全量回归和版本收口；`server.thread_num` / `mysql.pool_size` 参数矩阵后置到有新证据时再评估。
 
 ## 结果分析记录
 

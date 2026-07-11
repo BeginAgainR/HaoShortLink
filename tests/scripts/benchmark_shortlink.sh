@@ -10,7 +10,12 @@ BENCH_TOOL="${HAOHTTP_BENCH_TOOL:-auto}"
 MODE="${HAOHTTP_BENCH_MODE:-memory}"
 SCENARIO="${HAOHTTP_BENCH_SCENARIO:-all}"
 PORT="${HAOHTTP_BENCH_PORT:-18084}"
-BASE_URL="http://127.0.0.1:${PORT}"
+BASE_URL="${HAOHTTP_BENCH_BASE_URL:-http://127.0.0.1:${PORT}}"
+BASE_URL="${BASE_URL%/}"
+USE_EXTERNAL_SERVER=false
+if [[ -n "${HAOHTTP_BENCH_BASE_URL:-}" ]]; then
+    USE_EXTERNAL_SERVER=true
+fi
 REQUESTS="${HAOHTTP_BENCH_REQUESTS:-1000}"
 CONCURRENCY="${HAOHTTP_BENCH_CONCURRENCY:-16}"
 THREAD_NUM="${HAOHTTP_BENCH_THREAD_NUM:-4}"
@@ -76,6 +81,7 @@ Common environment variables:
   HAOHTTP_BENCH_CONCURRENCY   default: ${CONCURRENCY}
   HAOHTTP_BENCH_THREAD_NUM    default: ${THREAD_NUM}
   HAOHTTP_BENCH_PORT          default: ${PORT}
+  HAOHTTP_BENCH_BASE_URL      target an already running service or proxy instead of starting shortlink_server
   HAOHTTP_BENCH_CURL_MAX_TIME_SECONDS default: ${CURL_MAX_TIME_SECONDS}
   HAOHTTP_BENCH_MODE          default: ${MODE}
   HAOHTTP_BENCH_SCENARIO      default: ${SCENARIO}
@@ -179,6 +185,19 @@ wait_for_ready()
     fail "health endpoint did not become ready at ${BASE_URL}"
 }
 
+wait_for_external_ready()
+{
+    for _ in {1..80}; do
+        if curl -fsS "${BASE_URL}/api/health" >/dev/null 2>&1; then
+            return 0
+        fi
+
+        sleep 0.1
+    done
+
+    fail "external benchmark target did not become ready at ${BASE_URL}"
+}
+
 ensure_benchmark_port_unused()
 {
     if curl -fsS --max-time 1 "${BASE_URL}/api/health" >/dev/null 2>&1; then
@@ -217,7 +236,7 @@ warm_redirect_cache()
 
 hey_supports_disable_redirects()
 {
-    "${HEY_BIN}" -h 2>&1 | grep -q -- "-disable-redirects"
+    { "${HEY_BIN}" 2>&1 || true; } | grep -q -- "-disable-redirects"
 }
 
 safe_file_name()
@@ -278,9 +297,9 @@ run_hey()
     local body="${5:-}"
     local safe_label
     safe_label="$(safe_file_name "${label}")"
-    local output_file="${TMP_DIR}/${safe_label}.hey.txt"
+    local output_file="${TMP_DIR}/${safe_label}.hey.csv"
     local url="${BASE_URL}${path}"
-    local -a cmd=("${HEY_BIN}" -n "${REQUESTS}" -c "${CONCURRENCY}" -m "${method}")
+    local -a cmd=("${HEY_BIN}" -n "${REQUESTS}" -c "${CONCURRENCY}" -o csv -m "${method}")
 
     if [[ "${method}" == "POST" ]]; then
         cmd+=(-H "Content-Type: application/json" -d "${body}")
@@ -305,14 +324,32 @@ print_hey_result_row()
     local label="$1"
     local expected_status="$2"
     local output_file="$3"
-    local qps average p95 p99 total expected_count error_rate note
+    local latency_file="${output_file}.latency"
+    local sorted_latency_file="${output_file}.latency.sorted"
+    local qps average p95 p99 total expected_count total_duration error_rate note target_context
 
-    qps="$(awk '/Requests\/sec:/ { print $2; exit }' "${output_file}")"
-    average="$(awk '/Average:/ { print $2; exit }' "${output_file}")"
-    p95="$(awk '$1 == "95%" { print $2; exit }' "${output_file}")"
-    p99="$(awk '$1 == "99%" { print $2; exit }' "${output_file}")"
-    total="$(awk '/responses$/ { sum += $2 } END { print sum + 0 }' "${output_file}")"
-    expected_count="$(awk -v code="[${expected_status}]" '$1 == code { print $2; found=1 } END { if (!found) print 0 }' "${output_file}")"
+    awk -F, 'NR > 1 { print $1 }' "${output_file}" > "${latency_file}"
+    sort -n "${latency_file}" > "${sorted_latency_file}"
+
+    total="$(wc -l < "${latency_file}" | tr -d ' ')"
+    expected_count="$(awk -F, -v code="${expected_status}" 'NR > 1 && $7 == code { count++ } END { print count + 0 }' "${output_file}")"
+    total_duration="$(awk -F, 'NR > 1 { end = $8 + $1; if (end > max) max = end } END { printf "%.6f", max + 0 }' "${output_file}")"
+
+    if awk -v duration="${total_duration}" 'BEGIN { exit !(duration > 0) }'; then
+        qps="$(awk -v total="${total}" -v duration="${total_duration}" 'BEGIN { printf "%.2f", total / duration }')"
+    else
+        qps="unknown"
+    fi
+
+    average="$(awk '{ sum += $1 } END { if (NR > 0) printf "%.6fs", sum / NR; else print "unknown" }' "${latency_file}")"
+    p95="$(percentile_from_sorted_file "${sorted_latency_file}" "${total}" 95)"
+    p99="$(percentile_from_sorted_file "${sorted_latency_file}" "${total}" 99)"
+    if [[ "${p95}" != "unknown" ]]; then
+        p95="${p95}s"
+    fi
+    if [[ "${p99}" != "unknown" ]]; then
+        p99="${p99}s"
+    fi
 
     if [[ "${total}" -gt 0 ]]; then
         error_rate="$(awk -v total="${total}" -v ok="${expected_count}" 'BEGIN { printf "%.2f%%", ((total - ok) * 100.0 / total) }')"
@@ -320,7 +357,11 @@ print_hey_result_row()
         error_rate="unknown"
     fi
 
-    note="tool hey; expected ${expected_status}; commit $(git -C "${ROOT_DIR}" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+    target_context="commit $(git -C "${ROOT_DIR}" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+    if [[ "${USE_EXTERNAL_SERVER}" == true ]]; then
+        target_context="external target ${BASE_URL}; repo ${target_context}"
+    fi
+    note="tool hey; expected ${expected_status}; ${target_context}"
     if [[ "${expected_status}" == "302" ]] && ! hey_supports_disable_redirects; then
         note="${note}; hey followed redirects"
     fi
@@ -415,7 +456,7 @@ print_curl_result_row()
     local elapsed_ms="$4"
     local latency_file="${output_file}.latency"
     local sorted_latency_file="${output_file}.latency.sorted"
-    local total expected_count qps average p95 p99 error_rate note
+    local total expected_count qps average p95 p99 error_rate note target_context
 
     total="$(wc -l < "${output_file}" | tr -d ' ')"
     expected_count="$(awk -v code="${expected_status}" '$1 == code { count++ } END { print count + 0 }' "${output_file}")"
@@ -444,7 +485,11 @@ print_curl_result_row()
         error_rate="unknown"
     fi
 
-    note="tool curl; expected ${expected_status}; commit $(git -C "${ROOT_DIR}" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+    target_context="commit $(git -C "${ROOT_DIR}" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+    if [[ "${USE_EXTERNAL_SERVER}" == true ]]; then
+        target_context="external target ${BASE_URL}; repo ${target_context}"
+    fi
+    note="tool curl; expected ${expected_status}; ${target_context}"
     echo "| ${label} | ${MODE} | ${CONCURRENCY} | ${REQUESTS} requests | ${qps:-unknown} | ${average:-unknown} | ${p95:-unknown} | ${p99:-unknown} | ${error_rate} | ${note} |"
 }
 
@@ -477,9 +522,12 @@ run_scenario()
             [[ -n "${REDIRECT_CODE}" ]] || fail "created redirect benchmark link did not return a code"
             delete_redis_key "${REDIRECT_CODE}"
             local original_requests="${REQUESTS}"
+            local original_concurrency="${CONCURRENCY}"
             REQUESTS=1
+            CONCURRENCY=1
             run_benchmark "GET /s/{code} Redis miss" "302" "GET" "/s/${REDIRECT_CODE}"
             REQUESTS="${original_requests}"
+            CONCURRENCY="${original_concurrency}"
             ;;
         invalid-url)
             run_benchmark "POST invalid URL" "400" "POST" "/api/short-links" '{"url":"ftp://example.com/not-supported"}'
@@ -507,19 +555,24 @@ fi
 
 trap cleanup EXIT
 
-if [[ ! -x "${SERVER_BIN}" ]]; then
+if [[ "${USE_EXTERNAL_SERVER}" == false && ! -x "${SERVER_BIN}" ]]; then
     fail "shortlink_server binary not found or not executable at ${SERVER_BIN}; build the project first"
 fi
 
 command -v curl >/dev/null 2>&1 || fail "curl is required"
 
 resolve_bench_tool
-write_config
-
-ensure_benchmark_port_unused
-"${SERVER_BIN}" "${CONFIG_FILE}" > "${SERVER_LOG}" 2>&1 < /dev/null &
-SERVER_PID="$!"
-wait_for_ready
+if [[ "${USE_EXTERNAL_SERVER}" == true ]]; then
+    wait_for_external_ready
+    CONFIG_DESCRIPTION="external target ${BASE_URL}"
+else
+    write_config
+    ensure_benchmark_port_unused
+    "${SERVER_BIN}" "${CONFIG_FILE}" > "${SERVER_LOG}" 2>&1 < /dev/null &
+    SERVER_PID="$!"
+    wait_for_ready
+    CONFIG_DESCRIPTION="${CONFIG_FILE}"
+fi
 
 cat <<EOF
 Benchmark configuration:
@@ -530,7 +583,7 @@ Benchmark configuration:
 - tool: ${RESOLVED_BENCH_TOOL}
 - server.thread_num: ${THREAD_NUM}
 - mysql.pool_size: ${MYSQL_POOL_SIZE}
-- config: ${CONFIG_FILE}
+- config: ${CONFIG_DESCRIPTION}
 
 | 场景 | 模式 | 并发 | 总请求/时长 | QPS | 平均延迟 | P95 | P99 | 错误率 | 备注 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
