@@ -1,6 +1,6 @@
 # 架构说明
 
-状态：草案
+状态：已建立基础版，持续维护
 当前实现：框架层存在，短链接业务层已实现 V1 最小闭环、MySQL 持久化和可选 Redis 查询缓存
 
 ## 分层
@@ -55,6 +55,16 @@ GET /s/{code}
   -> 302 Location
 ```
 
+当前本地工程化链路：
+
+```text
+client
+  -> Nginx
+  -> shortlink_server
+       -> MySQL（事实来源）
+       -> Redis（可选查询缓存）
+```
+
 ## 边界约定
 
 - 不重写整个框架。
@@ -65,6 +75,8 @@ GET /s/{code}
 
 ## 后续关注点
 
-- Docker Compose、Nginx 和部署流程如何后续梳理。
-- 框架测试如何覆盖路由、响应构造和错误响应。
-- CORS、中间件执行顺序和限流能力如何后续梳理。
+- 请求日志、`request_id`、结构化业务日志和敏感字段边界。
+- 指标记录、线程安全、低基数标签和 `/metrics` 暴露范围。
+- liveness / readiness 以及 MySQL、Redis 故障对就绪状态的影响。
+- MySQL / Redis 集成测试接入远端 CI。
+- CORS、中间件执行顺序和 v1.6 限流能力继续按小步梳理。

@@ -1,6 +1,6 @@
 # 部署计划
 
-状态：草案
+状态：已建立本地方案，持续维护
 当前实现：已整理 Linux VM 手工运行说明；已新增并验证本地 Docker Compose 编排；已接入 `shortlink_server` 服务容器和 Nginx 反向代理
 
 ## 说明

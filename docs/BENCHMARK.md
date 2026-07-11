@@ -5,8 +5,8 @@
 
 ## 说明
 
-本文档用于记录 HaoShortLink v1.4 的压测目标、工具、环境和结果。当前短链接核心接口、
-MySQL 持久化、Redis 查询缓存、本地 Compose 编排和第一版测试 / CI 已完成；v1.4 将在这些基础上建立可重复的性能与稳定性基线。
+本文档记录 HaoShortLink v1.4 的压测目标、工具、环境和结果。v1.4 已在短链接核心接口、
+MySQL 持久化、Redis 查询缓存、本地 Compose 编排和第一版测试 / CI 基础上建立可重复的性能与稳定性基线。
 
 ## v1.4 目标
 
@@ -494,6 +494,8 @@ v1.4.7 验证结果：
 - Redis 不可用 fallback 通过：创建短链返回 `201`，跳转可回源 MySQL 并返回 `302`。
 - 异常场景 artifact：`/tmp/haohttp-exception-scenarios.EUZdzv`。
 - 异常场景中，Redis 不可用 fallback 和 MySQL 不可用启动失败行为稳定；三种存储模式下每组 50 个非法 URL、空 body、非 JSON、缺少 `url` 和短码不存在请求均返回预期 4xx。
+
+上述 `/tmp` 路径是本地临时验证产物，不属于仓库中的长期 artifact；长期结论以本文记录的参数、结果表和摘要为准。
 
 v1.4 收口结论：
 
