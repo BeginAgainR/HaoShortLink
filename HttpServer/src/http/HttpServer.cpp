@@ -1,6 +1,8 @@
 #include "../../include/http/HttpServer.h"
+#include "../../include/utils/RequestId.h"
 
 #include <any>
+#include <cstdio>
 #include <functional>
 #include <memory>
 
@@ -34,13 +36,27 @@ const char* methodToString(HttpRequest::Method method)
     }
 }
 
+std::string formatDurationMs(double durationMs)
+{
+    char value[32];
+    std::snprintf(value, sizeof(value), "%.3f", durationMs);
+    return std::string(value);
+}
+
 void sendErrorResponse(const muduo::net::TcpConnectionPtr& conn,
                        HttpResponse::HttpStatusCode statusCode,
                        const std::string& errorCode,
                        const std::string& message)
 {
+    const std::string requestId = utils::generateRequestId();
     HttpResponse response;
     response.setErrorResponse(statusCode, errorCode, message);
+    response.addHeader("X-Request-ID", requestId);
+
+    LOG_WARN << "event=http_parse_error"
+             << " request_id=" << requestId
+             << " status=" << static_cast<int>(statusCode)
+             << " error_code=" << errorCode;
 
     muduo::net::Buffer buf;
     response.appendToBuffer(&buf);
@@ -185,21 +201,35 @@ void HttpServer::onMessage(const muduo::net::TcpConnectionPtr &conn,
 void HttpServer::onRequest(const muduo::net::TcpConnectionPtr &conn, const HttpRequest &req)
 {
     const muduo::Timestamp startTime = muduo::Timestamp::now();
-    const std::string &connection = req.getHeader("Connection");
+    HttpRequest observedReq = req;
+    const std::string suppliedRequestId = observedReq.getHeader("X-Request-ID");
+    const std::string requestId = utils::isValidRequestId(suppliedRequestId)
+                                      ? suppliedRequestId
+                                      : utils::generateRequestId();
+    observedReq.setRequestId(requestId);
+
+    const std::string connection = observedReq.getHeader("Connection");
     bool close = ((connection == "close") ||
-                  (req.getVersion() == "HTTP/1.0" && connection != "Keep-Alive"));
+                  (observedReq.getVersion() == "HTTP/1.0" && connection != "Keep-Alive"));
     HttpResponse response(close);
 
     // 根据请求报文信息来封装响应报文对象
-    httpCallback_(req, &response); // 执行onHttpCallback函数
+    httpCallback_(observedReq, &response); // 执行onHttpCallback函数
+    response.addHeader("X-Request-ID", requestId);
 
     // 可以给response设置一个成员，判断是否请求的是文件，如果是文件设置为true，并且存在文件位置在这里send出去。
     muduo::net::Buffer buf;
     response.appendToBuffer(&buf);
     const double elapsedMs = muduo::timeDifference(muduo::Timestamp::now(), startTime) * 1000.0;
-    LOG_INFO << "Request " << methodToString(req.method()) << " " << req.path()
-             << " -> " << static_cast<int>(response.getStatusCode())
-             << " " << elapsedMs << "ms";
+    const std::string routePattern = response.routePattern().empty()
+                                         ? "custom_callback"
+                                         : response.routePattern();
+    LOG_INFO << "event=http_request"
+             << " request_id=" << requestId
+             << " method=" << methodToString(observedReq.method())
+             << " route=" << routePattern
+             << " status=" << static_cast<int>(response.getStatusCode())
+             << " duration_ms=" << formatDurationMs(elapsedMs);
     // 打印完整的响应内容用于调试
     LOG_DEBUG << "Sending response:\n" << buf.toStringPiece().as_string();
 
@@ -214,6 +244,7 @@ void HttpServer::onRequest(const muduo::net::TcpConnectionPtr &conn, const HttpR
 // 执行请求对应的路由处理函数
 void HttpServer::handleRequest(const HttpRequest &req, HttpResponse *resp)
 {
+    std::string routePattern;
     try
     {
         // 处理请求前的中间件
@@ -221,10 +252,9 @@ void HttpServer::handleRequest(const HttpRequest &req, HttpResponse *resp)
         middlewareChain_.processBefore(mutableReq);
 
         // 路由处理
-        if (!router_.route(mutableReq, resp))
+        if (!router_.route(mutableReq, resp, &routePattern))
         {
-            LOG_INFO << "请求的啥，url：" << req.method() << " " << req.path();
-            LOG_INFO << "未找到路由，返回404";
+            routePattern = "unmatched";
             resp->setErrorResponse(HttpResponse::k404NotFound, "not_found", "Not Found");
             resp->setCloseConnection(true);
         }
@@ -236,14 +266,26 @@ void HttpServer::handleRequest(const HttpRequest &req, HttpResponse *resp)
     {
         // 处理中间件抛出的响应（如CORS预检请求）
         *resp = res;
+        if (routePattern.empty())
+        {
+            routePattern = "middleware";
+        }
     }
-    catch (const std::exception& e) 
+    catch (const std::exception&)
     {
         // 错误处理
+        LOG_ERROR << "event=http_handler_error"
+                  << " request_id=" << req.requestId();
         resp->setErrorResponse(HttpResponse::k500InternalServerError,
                                "internal_server_error",
                                "Internal Server Error");
     }
+
+    if (routePattern.empty())
+    {
+        routePattern = "unmatched";
+    }
+    resp->setRoutePattern(routePattern);
 }
 
 } // namespace http

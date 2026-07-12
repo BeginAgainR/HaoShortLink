@@ -5,6 +5,7 @@
 #include <memory>
 #include <functional>
 #include <regex>
+#include <utility>
 #include <vector>
 
 #include "RouterHandler.h"
@@ -63,18 +64,18 @@ public:
     void addRegexHandler(HttpRequest::Method method, const std::string &path, HandlerPtr handler)
     {
         std::regex pathRegex = convertToRegex(path);
-        regexHandlers_.emplace_back(method, pathRegex, handler);
+        regexHandlers_.emplace_back(method, path, pathRegex, handler);
     }
 
     // 注册动态路由处理函数
     void addRegexCallback(HttpRequest::Method method, const std::string &path, const HandlerCallback &callback)
     {
         std::regex pathRegex = convertToRegex(path);
-        regexCallbacks_.emplace_back(method, pathRegex, callback);
+        regexCallbacks_.emplace_back(method, path, pathRegex, callback);
     }
 
     // 处理请求
-    bool route(const HttpRequest &req, HttpResponse *resp);
+    bool route(const HttpRequest &req, HttpResponse *resp, std::string *matchedRoute = nullptr);
 
 private:
     std::regex convertToRegex(const std::string &pathPattern)
@@ -97,19 +98,27 @@ private:
     struct RouteCallbackObj
     {
         HttpRequest::Method method_;
+        std::string pathPattern_;
         std::regex pathRegex_;
         HandlerCallback callback_;
-        RouteCallbackObj(HttpRequest::Method method, std::regex pathRegex, const HandlerCallback &callback)
-            : method_(method), pathRegex_(pathRegex), callback_(callback) {}
+        RouteCallbackObj(HttpRequest::Method method,
+                         std::string pathPattern,
+                         std::regex pathRegex,
+                         const HandlerCallback &callback)
+            : method_(method), pathPattern_(std::move(pathPattern)), pathRegex_(std::move(pathRegex)), callback_(callback) {}
     };
 
     struct RouteHandlerObj
     {
         HttpRequest::Method method_;
+        std::string pathPattern_;
         std::regex pathRegex_;
         HandlerPtr handler_;
-        RouteHandlerObj(HttpRequest::Method method, std::regex pathRegex, HandlerPtr handler)
-            : method_(method), pathRegex_(pathRegex), handler_(handler) {}
+        RouteHandlerObj(HttpRequest::Method method,
+                        std::string pathPattern,
+                        std::regex pathRegex,
+                        HandlerPtr handler)
+            : method_(method), pathPattern_(std::move(pathPattern)), pathRegex_(std::move(pathRegex)), handler_(std::move(handler)) {}
     };
 
     std::unordered_map<RouteKey, HandlerPtr, RouteKeyHash>      handlers_;       // 精准匹配

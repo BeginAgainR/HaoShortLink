@@ -1,6 +1,8 @@
 #include "../../include/http/HttpRequest.h"
 
+#include <algorithm>
 #include <cassert>
+#include <cctype>
 
 namespace http
 {
@@ -124,13 +126,28 @@ void HttpRequest::addHeader(const char *start, const char *colon, const char *en
 
 std::string HttpRequest::getHeader(const std::string &field) const
 {
-    std::string result;
     auto it = headers_.find(field);
     if (it != headers_.end())
     {
-        result = it->second;
+        return it->second;
     }
-    return result;
+
+    const auto equalsIgnoreCase = [](const std::string& left, const std::string& right) {
+        return left.size() == right.size() &&
+               std::equal(left.begin(), left.end(), right.begin(), [](unsigned char lhs, unsigned char rhs) {
+                   return std::tolower(lhs) == std::tolower(rhs);
+               });
+    };
+
+    for (const auto& header : headers_)
+    {
+        if (equalsIgnoreCase(header.first, field))
+        {
+            return header.second;
+        }
+    }
+
+    return "";
 }
 
 void HttpRequest::swap(HttpRequest &that)
@@ -141,6 +158,7 @@ void HttpRequest::swap(HttpRequest &that)
     std::swap(queryParameters_, that.queryParameters_);
     std::swap(version_, that.version_);
     std::swap(headers_, that.headers_);
+    std::swap(requestId_, that.requestId_);
     std::swap(receiveTime_, that.receiveTime_);
     std::swap(content_, that.content_);
     std::swap(contentLength_, that.contentLength_);

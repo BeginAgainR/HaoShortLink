@@ -88,10 +88,15 @@ fi
 body_file="${TMP_DIR}/body.txt"
 header_file="${TMP_DIR}/headers.txt"
 
-status="$(curl -sS -o "${body_file}" -w "%{http_code}" "${BASE_URL}/api/health")"
+client_request_id="api-smoke-request-01"
+status="$(curl -sS -D "${header_file}" -o "${body_file}" -w "%{http_code}" \
+    -H "X-Request-ID: ${client_request_id}" \
+    "${BASE_URL}/api/health")"
 body="$(cat "${body_file}")"
+headers="$(tr -d '\r' < "${header_file}")"
 expect_eq "${status}" "200" "health status"
 expect_contains "${body}" '"status":"ok"' "health body"
+expect_contains "${headers}" "X-Request-ID: ${client_request_id}" "health request ID response header"
 echo "PASS: GET /api/health"
 
 original_url="https://example.com/api-smoke"
@@ -131,5 +136,19 @@ body="$(cat "${body_file}")"
 expect_eq "${status}" "400" "invalid URL status"
 expect_contains "${body}" '"code":"invalid_url"' "invalid URL body"
 echo "PASS: POST /api/short-links rejects invalid URL"
+
+status="$(curl -sS -D "${header_file}" -o "${body_file}" -w "%{http_code}" \
+    -H 'X-Request-ID: invalid request id' \
+    "${BASE_URL}/api/health")"
+headers="$(tr -d '\r' < "${header_file}")"
+generated_request_id="$(tr -d '\r' < "${header_file}" | sed -n 's/^X-Request-ID: \([0-9a-f]*\)$/\1/p')"
+expect_eq "${status}" "200" "health with invalid request ID status"
+if [[ ! "${generated_request_id}" =~ ^[0-9a-f]{32}$ ]]; then
+    fail "invalid client request ID should be replaced, got headers: ${headers}"
+fi
+echo "PASS: invalid X-Request-ID is replaced"
+
+expect_contains "$(cat "${SERVER_LOG}")" "event=http_request" "structured request log event"
+expect_contains "$(cat "${SERVER_LOG}")" "route=/s/:code" "structured request log route pattern"
 
 echo "API smoke test passed"

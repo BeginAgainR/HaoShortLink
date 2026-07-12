@@ -6,6 +6,7 @@ add_executable(hao_shortlink_tests
     ${PROJECT_SOURCE_DIR}/HttpServer/src/http/HttpResponse.cpp
     ${PROJECT_SOURCE_DIR}/HttpServer/src/middleware/MiddlewareChain.cpp
     ${PROJECT_SOURCE_DIR}/HttpServer/src/router/Router.cpp
+    ${PROJECT_SOURCE_DIR}/HttpServer/src/utils/RequestId.cpp
 )
 
 target_link_libraries(hao_shortlink_tests
