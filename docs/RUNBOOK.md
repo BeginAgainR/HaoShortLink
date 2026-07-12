@@ -27,7 +27,7 @@
 - OrbStack Linux VM：`haoHTTP`
 - 进入方式：`ssh haoHTTP@orb`
 - 项目路径：`/Users/hao/Code/haoHTTP`
-- 当前分支：`refactor/hao-shortlink-cleanup`
+- 当前分支：`refactor/v1.5-observability`
 
 当前 VM 已安装：
 
@@ -114,6 +114,7 @@ server.name=HaoShortLink
 server.port=8080
 server.thread_num=4
 log.level=INFO
+metrics.enabled=true
 storage.type=memory
 redis.enabled=false
 ```
@@ -127,6 +128,7 @@ redis.enabled=false
 - `memory` 是默认存储方式。
 - `mysql` 需要先创建 `short_links` 表并配置 MySQL 连接信息。
 - `redis.enabled` 是 MySQL 存储模式下的可选查询缓存开关，默认关闭。
+- `metrics.enabled` 控制直连服务的 `GET /metrics` 路由，默认启用。
 
 建议：
 
@@ -247,6 +249,18 @@ curl -i http://127.0.0.1:8080/s/000001
 
 ```bash
 curl -i http://127.0.0.1:18080/api/health
+```
+
+直连服务查看 Prometheus 文本指标：
+
+```bash
+curl -i http://127.0.0.1:18080/metrics
+```
+
+Nginx 默认不转发 `/metrics`。以下请求应返回 Nginx 自身的 `404`：
+
+```bash
+curl -i http://127.0.0.1:8080/metrics
 ```
 
 验证 MySQL 表结构：

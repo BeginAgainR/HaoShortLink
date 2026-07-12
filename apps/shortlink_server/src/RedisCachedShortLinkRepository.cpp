@@ -7,9 +7,11 @@ namespace shortlink
 
 RedisCachedShortLinkRepository::RedisCachedShortLinkRepository(
     ShortLinkRepository& sourceRepository,
-    RedisShortLinkCache cache)
+    RedisShortLinkCache cache,
+    ShortLinkMetrics* metrics)
     : sourceRepository_(sourceRepository),
-      cache_(std::move(cache))
+      cache_(std::move(cache)),
+      metrics_(metrics)
 {}
 
 std::optional<ShortLinkRepository::ShortLinkRecord>
@@ -20,9 +22,27 @@ RedisCachedShortLinkRepository::create(const std::string& originalUrl)
 
 std::optional<std::string> RedisCachedShortLinkRepository::findOriginalUrl(const std::string& code) const
 {
-    std::optional<std::string> cachedOriginalUrl = cache_.getOriginalUrl(code);
+    std::optional<std::string> cachedOriginalUrl;
+    try
+    {
+        cachedOriginalUrl = cache_.getOriginalUrl(code);
+    }
+    catch (...)
+    {
+        if (metrics_ != nullptr)
+        {
+            metrics_->recordRedirect(ShortLinkMetrics::RedirectResult::Error,
+                                     ShortLinkMetrics::RedirectSource::Redis);
+        }
+        throw;
+    }
     if (cachedOriginalUrl)
     {
+        if (metrics_ != nullptr)
+        {
+            metrics_->recordRedirect(ShortLinkMetrics::RedirectResult::Success,
+                                     ShortLinkMetrics::RedirectSource::Redis);
+        }
         return cachedOriginalUrl;
     }
 

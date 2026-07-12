@@ -17,6 +17,7 @@
 #include "HttpContext.h"
 #include "HttpRequest.h"
 #include "HttpResponse.h"
+#include "../metrics/HttpMetrics.h"
 #include "../router/Router.h"
 #include "../session/SessionManager.h"
 #include "../middleware/MiddlewareChain.h"
@@ -58,38 +59,49 @@ public:
         httpCallback_ = cb;
     }
 
+    std::string prometheusMetrics() const
+    {
+        return httpMetrics_.renderPrometheus();
+    }
+
     // 注册静态路由处理器
     void Get(const std::string& path, const HttpCallback& cb)
     {
         router_.registerCallback(HttpRequest::kGet, path, cb);
+        httpMetrics_.registerRoute(HttpRequest::kGet, path);
     }
     
     // 注册静态路由处理器
     void Get(const std::string& path, router::Router::HandlerPtr handler)
     {
         router_.registerHandler(HttpRequest::kGet, path, handler);
+        httpMetrics_.registerRoute(HttpRequest::kGet, path);
     }
 
     void Post(const std::string& path, const HttpCallback& cb)
     {
         router_.registerCallback(HttpRequest::kPost, path, cb);
+        httpMetrics_.registerRoute(HttpRequest::kPost, path);
     }
 
     void Post(const std::string& path, router::Router::HandlerPtr handler)
     {
         router_.registerHandler(HttpRequest::kPost, path, handler);
+        httpMetrics_.registerRoute(HttpRequest::kPost, path);
     }
 
     // 注册动态路由处理器
     void addRoute(HttpRequest::Method method, const std::string& path, router::Router::HandlerPtr handler)
     {
         router_.addRegexHandler(method, path, handler);
+        httpMetrics_.registerRoute(method, path);
     }
 
     // 注册动态路由处理函数
     void addRoute(HttpRequest::Method method, const std::string& path, const router::Router::HandlerCallback& callback)
     {
         router_.addRegexCallback(method, path, callback);
+        httpMetrics_.registerRoute(method, path);
     }
 
     // 设置会话管理器
@@ -136,6 +148,7 @@ private:
     router::Router                               router_; // 路由
     std::unique_ptr<session::SessionManager>     sessionManager_; // 会话管理器
     middleware::MiddlewareChain                  middlewareChain_; // 中间件链
+    metrics::HttpMetrics                         httpMetrics_; // HTTP 请求指标
     std::unique_ptr<ssl::SslContext>             sslCtx_; // SSL 上下文
     bool                                         useSSL_; // 是否使用 SSL   
     // TcpConnectionPtr -> SslConnectionPtr 

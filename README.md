@@ -11,7 +11,8 @@ HaoShortLink 是一个基于 muduo 网络库的 C++17 HTTP 框架项目，当前
 - v1.2 工程化运行已完成本地 Docker Compose 验证，可启动 MySQL、Redis、`shortlink_server` 和 Nginx。
 - v1.3 已完成第一版测试与 CI 收口，包含第一批 CTest、API 冒烟测试、MySQL / Redis 集成测试脚本和 CI 第一版 workflow；GitHub Actions 云端 CI 已通过。
 - v1.4 已完成性能与稳定性收口，建立 curl / `hey` 多模式基线，覆盖关键异常场景并验证 Nginx 入口；本地结果不作为生产承载承诺。
-- MySQL / Redis 依赖集成已进入 CI；下一阶段 v1.5 聚焦结构化日志、基础指标和本地监控展示。
+- v1.5 进行中：已完成 request ID、通用结构化请求日志、基础 HTTP / 短链指标和 `/metrics`；Prometheus、Grafana 和 dashboard 尚未接入。
+- MySQL / Redis 依赖集成已进入 CI；下一批 v1.5.3 聚焦本地监控采集和展示。
 - 旧五子棋业务代码已经清理，旧图片资源已移除。
 - 已完成请求日志、统一 JSON 错误响应、JSON 响应辅助和配置加载等框架基础能力。
 - 构建验证在 Linux 虚拟机或容器环境中进行，不在 Mac 宿主机上构建。
@@ -45,5 +46,5 @@ tests/                      自动化测试和测试脚本
 
 ## 说明
 
-当前短链接服务支持内存存储、MySQL 持久化和可选 Redis 查询缓存；已提供并验证本地 Docker Compose 编排，可启动 MySQL、Redis、`shortlink_server` 和 Nginx；v1.3 已完成第一版自动化测试和 CI 收口，v1.4 已完成性能与稳定性基线。消息队列和监控能力尚未实现。
+当前短链接服务支持内存存储、MySQL 持久化和可选 Redis 查询缓存；已提供并验证本地 Docker Compose 编排，可启动 MySQL、Redis、`shortlink_server` 和 Nginx；v1.3 已完成第一版自动化测试和 CI 收口，v1.4 已完成性能与稳定性基线，v1.5 已完成第一批日志与指标实现。消息队列、Prometheus 和 Grafana 尚未实现。
 未实现内容会在 `docs/` 中以“草案”“计划”或“暂缓”的形式记录，避免将未来能力描述为已完成能力。

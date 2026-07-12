@@ -55,6 +55,11 @@ MySqlShortLinkRepository::create(const std::string& originalUrl)
     }
     catch (const std::exception& e)
     {
+        if (metrics_ != nullptr)
+        {
+            metrics_->recordBackendError(ShortLinkMetrics::Backend::Mysql,
+                                         ShortLinkMetrics::BackendOperation::Create);
+        }
         LOG_ERROR << "Failed to create short link in MySQL: " << e.what();
         if (conn)
         {
@@ -70,6 +75,11 @@ MySqlShortLinkRepository::create(const std::string& originalUrl)
     }
     catch (...)
     {
+        if (metrics_ != nullptr)
+        {
+            metrics_->recordBackendError(ShortLinkMetrics::Backend::Mysql,
+                                         ShortLinkMetrics::BackendOperation::Create);
+        }
         LOG_ERROR << "Failed to create short link in MySQL: unknown error";
         if (conn)
         {
@@ -87,17 +97,42 @@ MySqlShortLinkRepository::create(const std::string& originalUrl)
 
 std::optional<std::string> MySqlShortLinkRepository::findOriginalUrl(const std::string& code) const
 {
-    auto conn = http::db::DbConnectionPool::getInstance().getConnection();
-    std::unique_ptr<sql::ResultSet> result(
-        conn->executeQuery("SELECT original_url FROM short_links WHERE code = ? LIMIT 1",
-                           code));
-
-    if (!result || !result->next())
+    try
     {
-        return std::nullopt;
-    }
+        auto conn = http::db::DbConnectionPool::getInstance().getConnection();
+        std::unique_ptr<sql::ResultSet> result(
+            conn->executeQuery("SELECT original_url FROM short_links WHERE code = ? LIMIT 1",
+                               code));
 
-    return result->getString("original_url");
+        if (!result || !result->next())
+        {
+            if (metrics_ != nullptr)
+            {
+                metrics_->recordRedirect(ShortLinkMetrics::RedirectResult::NotFound,
+                                         ShortLinkMetrics::RedirectSource::Mysql);
+            }
+            return std::nullopt;
+        }
+
+        const std::string originalUrl = result->getString("original_url");
+        if (metrics_ != nullptr)
+        {
+            metrics_->recordRedirect(ShortLinkMetrics::RedirectResult::Success,
+                                     ShortLinkMetrics::RedirectSource::Mysql);
+        }
+        return originalUrl;
+    }
+    catch (...)
+    {
+        if (metrics_ != nullptr)
+        {
+            metrics_->recordRedirect(ShortLinkMetrics::RedirectResult::Error,
+                                     ShortLinkMetrics::RedirectSource::Mysql);
+            metrics_->recordBackendError(ShortLinkMetrics::Backend::Mysql,
+                                         ShortLinkMetrics::BackendOperation::Find);
+        }
+        throw;
+    }
 }
 
 std::string MySqlShortLinkRepository::encodeBase62(std::uint64_t value)

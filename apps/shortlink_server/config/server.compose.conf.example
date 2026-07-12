@@ -5,6 +5,7 @@ server.name=HaoShortLink
 server.port=8080
 server.thread_num=4
 log.level=INFO
+metrics.enabled=true
 
 # This file is intended for shortlink_server running in the haoHTTP
 # OrbStack Linux machine while MySQL and Redis run in OrbStack Docker.

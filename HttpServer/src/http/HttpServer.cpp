@@ -79,8 +79,8 @@ HttpServer::HttpServer(int port,
                        muduo::net::TcpServer::Option option)
     : listenAddr_(port)
     , server_(&mainLoop_, listenAddr_, name, option)
-    , useSSL_(useSSL)
     , httpCallback_(std::bind(&HttpServer::handleRequest, this, std::placeholders::_1, std::placeholders::_2))
+    , useSSL_(useSSL)
 {
     initialize();
 }
@@ -230,6 +230,10 @@ void HttpServer::onRequest(const muduo::net::TcpConnectionPtr &conn, const HttpR
              << " route=" << routePattern
              << " status=" << static_cast<int>(response.getStatusCode())
              << " duration_ms=" << formatDurationMs(elapsedMs);
+    httpMetrics_.record(observedReq.method(),
+                        routePattern,
+                        response.getStatusCode(),
+                        elapsedMs / 1000.0);
     // 打印完整的响应内容用于调试
     LOG_DEBUG << "Sending response:\n" << buf.toStringPiece().as_string();
 

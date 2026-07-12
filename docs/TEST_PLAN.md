@@ -54,8 +54,8 @@ v1.3 的目标是把当前手工验证沉淀为可重复执行的测试体系，
 - 安装 C++ 构建依赖和运行测试所需工具。
 - 准备 `muduo_base` 和 `muduo_net`。
 - 执行 CMake 配置和构建。
-- 执行 CTest，覆盖框架基础测试和短链业务纯逻辑测试。
-- 执行 API 冒烟测试，使用内存存储模式验证健康检查、创建短链、短码跳转和基础错误响应。
+- 执行 CTest，覆盖框架基础测试、短链业务纯逻辑测试、request ID 和指标并发更新 / Prometheus 文本渲染。
+- 执行 API 冒烟测试，使用内存存储模式验证健康检查、创建短链、短码跳转、基础错误响应和可配置 `/metrics`。
 - 检查 `tests/scripts/*.sh` 的 Bash 语法。
 - 通过 Docker Compose 启动 MySQL、Redis，执行持久化、缓存回填和 Redis 不可用 fallback 测试。
 - muduo 构建命令兼容新版 CMake 对旧项目最低版本策略的检查。
@@ -63,7 +63,8 @@ v1.3 的目标是把当前手工验证沉淀为可重复执行的测试体系，
 当前暂不覆盖：
 
 - Nginx 反向代理验证。
-- 压测、限流和可观测性验证。
+- 压测和限流。
+- Prometheus scrape、Grafana datasource 和 dashboard；进程内指标与 `/metrics` 已进入现有 CTest、API smoke 和依赖集成入口。
 
 依赖集成 CI 边界：
 
@@ -101,19 +102,21 @@ HAOHTTP_TEST_HOST=haoHTTP@orb bash tests/scripts/run_integration_with_compose.sh
 
 当前状态：已通过 Linux VM 构建验证、v1.1 干净克隆验证、v1.2 本地干净克隆 Compose 验证、
 v1.3 最小测试骨架验证、第一批框架基础测试验证、短链业务纯逻辑测试验证、API 冒烟测试验证、
-MySQL / Redis 集成测试验证、Redis 不可用回退测试验证、Compose 依赖编排验证、CI 第一版核心命令链路验证、GitHub Actions 云端 CI 验证和 v1.4.7 全量回归验证。
+MySQL / Redis 集成测试验证、Redis 不可用回退测试验证、Compose 依赖编排验证、CI 第一版核心命令链路验证、GitHub Actions 云端 CI 验证、v1.4.7 全量回归验证和 v1.5.2 指标验证。
 
 最近一次验证：
 
 - 环境：OrbStack Linux VM `haoHTTP`
-- 类型：v1.5.1 request ID 与通用结构化请求日志验证
+- 类型：v1.5.2 进程内指标与 `/metrics` 验证
 - 分支：`refactor/v1.5-observability`
 - 项目路径：`/Users/hao/Code/haoHTTP`
 - 构建目录：`/tmp/haoHTTP-build`
-- 命令：Linux VM 中执行 CMake 配置、构建、CTest 和 `tests/scripts/api_smoke_test.sh`；Mac 侧通过 `HAOHTTP_TEST_HOST=haoHTTP@orb bash tests/scripts/run_integration_with_compose.sh` 编排依赖集成回归。
-- 结果：`shortlink_server` 构建通过，CTest `1/1`、API smoke、MySQL / Redis 集成和 Redis 不可用 fallback 均通过；验证了 request ID 并发生成、合法 ID 原样回传、非法 ID 替换、结构化请求日志和动态路由模板。
+- 命令：Linux VM 中执行 CMake 配置、构建、CTest、`api_smoke_test.sh` 和 `shortlink_exception_scenarios_test.sh`；Mac 侧通过 `run_integration_with_compose.sh` 编排依赖集成回归，并验证 Nginx `/metrics` 边界。
+- 结果：`shortlink_server` 构建、CTest `1/1`、API smoke、MySQL / Redis hit / miss / backfill、Redis 不可用 fallback 和异常并发场景均通过；`metrics.enabled=false` 返回 404，Nginx 入口 `/metrics` 返回 404，指标不包含 request ID、短码或原始 URL 标签。异常场景 artifact 为 `/tmp/haohttp-exception-scenarios.OXKV8O`。
 
-上一版本收口验证：
+上一阶段验证：
+
+- v1.5.1 commit `15c75bd` 已完成独立干净克隆构建、CTest 和 API smoke，目录为 `/tmp/haoHTTP-v1.5.1-clean.44T2tu`。
 
 - v1.4.7 已完成 Linux VM 全量回归和独立干净克隆验证。
 - CTest、API smoke、MySQL / Redis 集成、Redis 不可用 fallback 和异常场景脚本均通过。

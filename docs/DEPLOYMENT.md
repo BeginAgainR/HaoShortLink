@@ -1,7 +1,7 @@
 # 部署计划
 
 状态：已建立本地方案，持续维护
-当前实现：已整理 Linux VM 手工运行说明；已新增并验证本地 Docker Compose 编排；已接入 `shortlink_server` 服务容器和 Nginx 反向代理
+当前实现：已整理 Linux VM 手工运行说明；已新增并验证本地 Docker Compose 编排；已接入 `shortlink_server` 服务容器、Nginx 反向代理和服务内部 `/metrics`；Prometheus / Grafana 尚未接入
 
 ## 说明
 
@@ -22,6 +22,7 @@ docs/RUNBOOK.md
 - 支持使用内存存储、MySQL 持久化和可选 Redis 查询缓存。
 - 支持使用 OrbStack Docker Compose 启动本地 MySQL、Redis、`shortlink_server` 服务容器和 Nginx 反向代理。
 - 本地 Compose 保留 `shortlink_server` 的 `18080` 直连调试入口。
+- `/metrics` 只通过 `shortlink_server` 内部或直连调试端口访问，Nginx 默认不转发。
 - 生产化部署应只对外暴露 Nginx 的 80/443 入口，后端服务和数据库缓存只在内部网络可见。
 - HTTPS/TLS 终止计划由 Nginx 配置承接，当前尚未实现。
 - 尚未定义线上发布、回滚、日志采集或监控方案。
