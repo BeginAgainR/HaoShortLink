@@ -130,7 +130,7 @@ Location: https://example.com/very/long/path
 
 ### Prometheus 指标
 
-当前状态：已实现进程内指标与文本暴露；Prometheus 服务尚未接入。
+当前状态：已实现进程内指标与文本暴露；本地 Compose 已接入 Prometheus 抓取和 Grafana dashboard。
 
 ```text
 GET /metrics

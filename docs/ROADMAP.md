@@ -353,7 +353,7 @@ v1.4 目标是在已有测试基础上观察服务在压力和异常场景下的
 - Grafana。
 - MySQL / Redis 集成 CI。
 
-当前状态：进行中。v1.5.0 设计收口、v1.5.1 request ID / 通用结构化请求日志和 v1.5.2 指标实现已完成；Prometheus / Grafana 尚未接入。
+当前状态：进行中。v1.5.0 设计收口、v1.5.1 request ID / 通用结构化请求日志、v1.5.2 指标实现和 v1.5.3 本地 Prometheus / Grafana 展示已完成；下一批为 v1.5.4 自动化验证、性能回归和文档收口。
 
 ### v1.5 执行批次草案
 
@@ -378,8 +378,8 @@ v1.5 目标是让服务运行状态可观察、可排查，并把已经稳定的
    - 记录请求量、错误率、延迟、创建 / 跳转结果和 Redis hit / miss / error 等基础指标。
    - 提供 Prometheus 可抓取的指标入口，避免把短码、URL、IP、User-Agent 或 `request_id` 作为指标标签。
 5. 监控展示：
-   - 状态：尚未实现。
-   - 增加 Prometheus 和 Grafana 本地编排与最小 dashboard。
+   - 状态：已完成。
+   - 已增加 Prometheus 和 Grafana 本地编排、持久化数据卷、自动 provisioning 与六面板 dashboard。
 6. 依赖 CI：
    - 状态：已完成前置版。
    - 现有 MySQL / Redis 集成和 Redis 不可用 fallback 脚本已接入 GitHub Actions。

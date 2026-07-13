@@ -1,7 +1,7 @@
 # 测试计划
 
-状态：持续维护；当前基线为 v1.4 全量回归通过
-当前实现：已建立框架与业务基础测试、API 冒烟、MySQL / Redis 集成、Redis 不可用回退、异常场景和 Compose 编排入口；增强后的 CI 已通过构建、CTest、API smoke、脚本语法和依赖集成验证，v1.4.7 全量回归已完成。
+状态：持续维护；当前基线为 v1.5.3 本地监控链路回归通过
+当前实现：已建立框架与业务基础测试、API 冒烟、MySQL / Redis 集成、Redis 不可用回退、异常场景、Compose 编排和本地监控冒烟入口；增强后的 CI 已通过构建、CTest、API smoke、脚本语法和依赖集成验证，v1.5.3 已补充 Prometheus / Grafana 端到端验证。
 
 ## v1.3 执行顺序
 
@@ -60,11 +60,11 @@ v1.3 的目标是把当前手工验证沉淀为可重复执行的测试体系，
 - 通过 Docker Compose 启动 MySQL、Redis，执行持久化、缓存回填和 Redis 不可用 fallback 测试。
 - muduo 构建命令兼容新版 CMake 对旧项目最低版本策略的检查。
 
-当前暂不覆盖：
+当前 CI 暂不覆盖：
 
 - Nginx 反向代理验证。
 - 压测和限流。
-- Prometheus scrape、Grafana datasource 和 dashboard；进程内指标与 `/metrics` 已进入现有 CTest、API smoke 和依赖集成入口。
+- Prometheus scrape、Grafana datasource 和 dashboard；本地 `monitoring_smoke_test.sh` 已覆盖，是否进入远端 CI 留待 v1.5.4 收口。
 
 依赖集成 CI 边界：
 
@@ -89,6 +89,7 @@ cmake --build /tmp/haoHTTP-build
 ctest --test-dir /tmp/haoHTTP-build --output-on-failure
 bash tests/scripts/api_smoke_test.sh
 HAOHTTP_TEST_HOST=haoHTTP@orb bash tests/scripts/run_integration_with_compose.sh
+bash tests/scripts/monitoring_smoke_test.sh
 ```
 
 ## 测试分层
@@ -102,20 +103,22 @@ HAOHTTP_TEST_HOST=haoHTTP@orb bash tests/scripts/run_integration_with_compose.sh
 
 当前状态：已通过 Linux VM 构建验证、v1.1 干净克隆验证、v1.2 本地干净克隆 Compose 验证、
 v1.3 最小测试骨架验证、第一批框架基础测试验证、短链业务纯逻辑测试验证、API 冒烟测试验证、
-MySQL / Redis 集成测试验证、Redis 不可用回退测试验证、Compose 依赖编排验证、CI 第一版核心命令链路验证、GitHub Actions 云端 CI 验证、v1.4.7 全量回归验证和 v1.5.2 指标验证。
+MySQL / Redis 集成测试验证、Redis 不可用回退测试验证、Compose 依赖编排验证、CI 第一版核心命令链路验证、
+GitHub Actions 云端 CI 验证、v1.4.7 全量回归验证、v1.5.2 指标验证和 v1.5.3 本地监控链路验证。
 
 最近一次验证：
 
-- 环境：OrbStack Linux VM `haoHTTP`
-- 类型：v1.5.2 进程内指标与 `/metrics` 验证
+- 环境：OrbStack Linux VM `haoHTTP` 与 OrbStack Docker
+- 类型：v1.5.3 Prometheus / Grafana 本地监控链路验证
 - 分支：`refactor/v1.5-observability`
 - 项目路径：`/Users/hao/Code/haoHTTP`
 - 构建目录：`/tmp/haoHTTP-build`
-- 命令：Linux VM 中执行 CMake 配置、构建、CTest、`api_smoke_test.sh` 和 `shortlink_exception_scenarios_test.sh`；Mac 侧通过 `run_integration_with_compose.sh` 编排依赖集成回归，并验证 Nginx `/metrics` 边界。
-- 结果：`shortlink_server` 构建、CTest `1/1`、API smoke、MySQL / Redis hit / miss / backfill、Redis 不可用 fallback 和异常并发场景均通过；`metrics.enabled=false` 返回 404，Nginx 入口 `/metrics` 返回 404，指标不包含 request ID、短码或原始 URL 标签。异常场景 artifact 为 `/tmp/haohttp-exception-scenarios.OXKV8O`。
+- 命令：Linux VM 中执行 CMake 配置、构建、CTest 和 `api_smoke_test.sh`；Mac 侧执行 `run_integration_with_compose.sh` 和 `monitoring_smoke_test.sh`。
+- 结果：`shortlink_server` 构建、CTest `1/1`、API smoke、MySQL / Redis 集成与 Redis 不可用 fallback 均通过；Prometheus target 为 `UP`，六条 dashboard PromQL、Grafana datasource / dashboard provisioning、Nginx `/metrics` 404、Prometheus 历史数据和 Grafana dashboard 容器重建恢复均通过。
 
 上一阶段验证：
 
+- v1.5.2 已通过进程内指标、`/metrics`、异常并发和 Nginx 暴露边界验证；异常场景 artifact 为 `/tmp/haohttp-exception-scenarios.OXKV8O`。
 - v1.5.1 commit `15c75bd` 已完成独立干净克隆构建、CTest 和 API smoke，目录为 `/tmp/haoHTTP-v1.5.1-clean.44T2tu`。
 
 - v1.4.7 已完成 Linux VM 全量回归和独立干净克隆验证。
