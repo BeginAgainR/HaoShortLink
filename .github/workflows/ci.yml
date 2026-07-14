@@ -89,3 +89,26 @@ jobs:
       - name: Stop dependency containers
         if: always()
         run: docker compose down --volumes --remove-orphans
+
+  monitoring-smoke:
+    name: Prometheus and Grafana smoke
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Run monitoring smoke test
+        env:
+          SHORTLINK_PROMETHEUS_IMAGE: prom/prometheus:v3.13.0
+          SHORTLINK_GRAFANA_IMAGE: grafana/grafana:12.4.3-security-02
+        run: bash tests/scripts/monitoring_smoke_test.sh
+
+      - name: Show monitoring logs on failure
+        if: failure()
+        run: docker compose logs --tail=200 prometheus grafana shortlink_server nginx
+
+      - name: Stop monitoring containers
+        if: always()
+        run: docker compose down --volumes --remove-orphans

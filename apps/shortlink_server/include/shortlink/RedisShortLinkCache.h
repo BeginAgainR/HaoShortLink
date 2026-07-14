@@ -1,5 +1,7 @@
 #pragma once
 
+#include "shortlink/ShortLinkMetrics.h"
+
 #include <optional>
 #include <string>
 
@@ -18,13 +20,14 @@ public:
         std::string keyPrefix = "shortlink:";
     };
 
-    explicit RedisShortLinkCache(Config config);
+    explicit RedisShortLinkCache(Config config, ShortLinkMetrics* metrics = nullptr);
 
     std::optional<std::string> getOriginalUrl(const std::string& code) const;
     bool setOriginalUrl(const std::string& code, const std::string& originalUrl) const;
 
 private:
     Config config_;
+    ShortLinkMetrics* metrics_;
 };
 
 } // namespace shortlink

@@ -100,6 +100,7 @@ cat > "${CONFIG_FILE}" <<EOF
 server.name=HaoShortLinkRedisFallback
 server.port=${PORT}
 server.thread_num=1
+metrics.enabled=true
 storage.type=mysql
 mysql.host=tcp://${MYSQL_HOST}:${MYSQL_PORT}
 mysql.user=${MYSQL_USER}
@@ -159,5 +160,13 @@ headers="$(tr -d '\r' < "${header_file}")"
 expect_eq "${status}" "302" "redirect should still succeed when Redis is unavailable"
 expect_contains "${headers}" "Location: ${TEST_ORIGINAL_URL}" "redirect Location header"
 echo "PASS: GET /s/${code} falls back to MySQL when Redis is unavailable"
+
+metrics_body="$(curl -fsS "${BASE_URL}/metrics")"
+expect_contains "${metrics_body}" 'haohttp_shortlink_redirect_total{result="success",source="mysql"} 1' "fallback MySQL redirect metric"
+expect_contains "${metrics_body}" 'haohttp_shortlink_cache_operations_total{operation="get",result="error"} 1' "Redis get error metric"
+expect_contains "${metrics_body}" 'haohttp_shortlink_cache_operations_total{operation="set",result="error"} 1' "Redis set error metric"
+expect_contains "${metrics_body}" 'haohttp_shortlink_backend_errors_total{backend="redis",operation="get"} 1' "Redis backend error metric"
+expect_contains "${metrics_body}" 'haohttp_shortlink_backend_errors_total{backend="redis",operation="set"} 1' "Redis backend set error metric"
+echo "PASS: Redis unavailable metrics"
 
 echo "Redis unavailable fallback test passed"

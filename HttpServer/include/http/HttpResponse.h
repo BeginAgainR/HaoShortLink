@@ -60,6 +60,12 @@ public:
 
     void addHeader(const std::string& key, const std::string& value)
     { headers_[key] = value; }
+
+    void setRoutePattern(const std::string& routePattern)
+    { routePattern_ = routePattern; }
+
+    const std::string& routePattern() const
+    { return routePattern_; }
     
     void setBody(const std::string& body)
     { 
@@ -86,6 +92,7 @@ private:
     std::string                        statusMessage_;
     bool                               closeConnection_;
     std::map<std::string, std::string> headers_;
+    std::string                        routePattern_;
     std::string                        body_;
     bool                               isFile_;
 };

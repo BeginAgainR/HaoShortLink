@@ -17,7 +17,7 @@
 | v1.2 | 已完成 | 工程化运行 | Docker Compose、Nginx、配置样例、部署文档 |
 | v1.3 | 已完成 | 测试与 CI | 框架测试、API 测试、集成测试、CI |
 | v1.4 | 已完成 | 性能与稳定性 | 压测、连接资源评估、错误场景覆盖、Nginx 入口底线验证 |
-| v1.5 | 草案 | 可观测性与依赖 CI | 结构化日志、指标统计、Prometheus、Grafana、MySQL / Redis 集成 CI |
+| v1.5 | 已完成 | 可观测性与依赖 CI | 结构化日志、指标统计、Prometheus、Grafana、MySQL / Redis 集成 CI |
 | v1.6 | 草案 | 可靠性与流量保护 | Redis 限流、降级策略、健康语义、保护性测试 |
 | v1.7 | 草案 | 链接生命周期 | 链接状态、过期策略、详情与列表、缓存失效 |
 | v1.8 | 草案 | 消息队列与异步事件 | Kafka、Kafka UI、事件生产与消费、访问事件流 |
@@ -353,31 +353,44 @@ v1.4 目标是在已有测试基础上观察服务在压力和异常场景下的
 - Grafana。
 - MySQL / Redis 集成 CI。
 
-当前状态：尚未实现。
+当前状态：已完成。v1.5.0 设计收口、v1.5.1 request ID / 通用结构化请求日志、v1.5.2 指标实现、v1.5.3 本地 Prometheus / Grafana 展示和 v1.5.4 自动化验证 / 性能回归 / 文档收口均已完成。
 
 ### v1.5 执行批次草案
 
 v1.5 目标是让服务运行状态可观察、可排查，并把已经稳定的 MySQL / Redis 集成回归放入远端 CI。
 
 1. 观测边界设计：
-   - 状态：尚未实现。
+   - 状态：已完成。
    - 明确请求日志、错误日志、关键业务日志、`request_id` 和敏感字段边界。
    - 明确指标名称、低基数标签、`/metrics` 暴露范围和线程安全要求。
-2. 结构化日志：
-   - 状态：尚未实现。
+   - 详细设计见 `docs/OBSERVABILITY_DESIGN.md`。
+2. request ID 与请求匹配信息：
+   - 状态：已完成。
+   - 校验或生成 request ID，并通过响应头返回。
+   - 在请求处理链中传递同一 request ID，并由 Router 返回注册时的路由模板。
+3. 结构化日志：
+   - 状态：已完成 v1.5 第一批通用请求日志。
    - 整理通用 HTTP 字段与短链接业务字段的框架 / 应用边界。
-3. 指标埋点与暴露：
-   - 状态：尚未实现。
+   - 第一批完成单行 key-value `http_request` 日志，再逐步补充业务事件。
+   - 创建、跳转、缓存和后端错误业务事件随对应指标埋点继续补充。
+4. 指标埋点与暴露：
+   - 状态：已完成。
    - 记录请求量、错误率、延迟、创建 / 跳转结果和 Redis hit / miss / error 等基础指标。
    - 提供 Prometheus 可抓取的指标入口，避免把短码、URL、IP、User-Agent 或 `request_id` 作为指标标签。
-4. 监控展示：
-   - 状态：尚未实现。
-   - 增加 Prometheus 和 Grafana 本地编排与最小 dashboard。
-5. 依赖 CI：
-   - 状态：已完成前置版。
+5. 监控展示：
+   - 状态：已完成。
+   - 已增加 Prometheus 和 Grafana 本地编排、持久化数据卷、自动 provisioning 与六面板 dashboard。
+6. 依赖 CI：
+   - 状态：已完成。
    - 现有 MySQL / Redis 集成和 Redis 不可用 fallback 脚本已接入 GitHub Actions。
+   - Prometheus scrape、Grafana datasource / dashboard、Nginx 暴露边界和监控数据卷恢复已作为独立 job 接入 GitHub Actions。
    - CI 使用 `127.0.0.1` 访问 Compose 发布端口，失败时输出依赖日志，结束时清理临时数据卷。
    - CI 暂不执行性能基线，也不把本地 OrbStack 地址策略带入 GitHub runner。
+7. v1.5.4 收口：
+   - 状态：已完成。
+   - 已在同一 Linux VM、相同脚本和参数下对比 v1.4.0 与 v1.5 代表性 `hey` 小基线。
+   - 已记录可测量的观测开销、测试波动和非生产结论边界，未据此提前实施连接或日志架构优化。
+   - 已对齐 README、Roadmap、测试计划、压测记录和可观测性设计的完成状态。
 
 ## 阶段 8：可靠性与流量保护
 

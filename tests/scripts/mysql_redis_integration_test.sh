@@ -110,6 +110,7 @@ cat > "${CONFIG_FILE}" <<EOF
 server.name=HaoShortLinkIntegration
 server.port=${PORT}
 server.thread_num=1
+metrics.enabled=true
 storage.type=mysql
 mysql.host=tcp://${MYSQL_HOST}:${MYSQL_PORT}
 mysql.user=${MYSQL_USER}
@@ -179,5 +180,21 @@ echo "PASS: GET /s/${TEST_CODE} redirects from MySQL source"
 redis_after="$(redis-cli --raw -h "${REDIS_HOST}" -p "${REDIS_PORT}" GET "${REDIS_KEY_PREFIX}${TEST_CODE}" 2>/dev/null || true)"
 expect_eq "${redis_after}" "${TEST_ORIGINAL_URL}" "redirect should backfill Redis cache"
 echo "PASS: Redis cache backfilled"
+
+status="$(curl -sS -D "${header_file}" -o "${body_file}" -w "%{http_code}" \
+    "${BASE_URL}/s/${TEST_CODE}")"
+headers="$(tr -d '\r' < "${header_file}")"
+expect_eq "${status}" "302" "second redirect status"
+expect_contains "${headers}" "Location: ${TEST_ORIGINAL_URL}" "second redirect Location header"
+echo "PASS: GET /s/${TEST_CODE} redirects from Redis cache"
+
+metrics_body="$(curl -fsS "${BASE_URL}/metrics")"
+expect_contains "${metrics_body}" 'haohttp_shortlink_create_total{result="success",storage="mysql"} 1' "MySQL create metric"
+expect_contains "${metrics_body}" 'haohttp_shortlink_redirect_total{result="success",source="mysql"} 1' "MySQL redirect metric"
+expect_contains "${metrics_body}" 'haohttp_shortlink_redirect_total{result="success",source="redis"} 1' "Redis redirect metric"
+expect_contains "${metrics_body}" 'haohttp_shortlink_cache_operations_total{operation="get",result="miss"} 1' "Redis miss metric"
+expect_contains "${metrics_body}" 'haohttp_shortlink_cache_operations_total{operation="get",result="hit"} 1' "Redis hit metric"
+expect_contains "${metrics_body}" 'haohttp_shortlink_cache_operations_total{operation="set",result="success"} 1' "Redis set metric"
+echo "PASS: MySQL / Redis metrics"
 
 echo "MySQL / Redis integration test passed"

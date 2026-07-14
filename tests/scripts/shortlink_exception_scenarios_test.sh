@@ -128,6 +128,7 @@ write_config()
 server.name=HaoShortLinkExceptionScenarios
 server.port=${PORT}
 server.thread_num=2
+metrics.enabled=true
 storage.type=${mode}
 mysql.host=tcp://${mysql_host}:${mysql_port}
 mysql.user=${MYSQL_USER}

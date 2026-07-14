@@ -18,7 +18,7 @@ void Router::registerCallback(HttpRequest::Method method, const std::string &pat
     callbacks_[key] = std::move(callback);
 }
 
-bool Router::route(const HttpRequest &req, HttpResponse *resp)
+bool Router::route(const HttpRequest &req, HttpResponse *resp, std::string *matchedRoute)
 {
     RouteKey key{req.method(), req.path()};
 
@@ -26,6 +26,10 @@ bool Router::route(const HttpRequest &req, HttpResponse *resp)
     auto handlerIt = handlers_.find(key);
     if (handlerIt != handlers_.end())
     {
+        if (matchedRoute != nullptr)
+        {
+            *matchedRoute = handlerIt->first.path;
+        }
         handlerIt->second->handle(req, resp);
         return true;
     }
@@ -34,18 +38,26 @@ bool Router::route(const HttpRequest &req, HttpResponse *resp)
     auto callbackIt = callbacks_.find(key);
     if (callbackIt != callbacks_.end())
     {
+        if (matchedRoute != nullptr)
+        {
+            *matchedRoute = callbackIt->first.path;
+        }
         callbackIt->second(req, resp);
         return true;
     }
 
     // 查找动态路由处理器
-    for (const auto &[method, pathRegex, handler] : regexHandlers_)
+    for (const auto &[method, pathPattern, pathRegex, handler] : regexHandlers_)
     {
         std::smatch match;
         std::string pathStr(req.path());
         // 如果方法匹配并且动态路由匹配，则执行处理器
         if (method == req.method() && std::regex_match(pathStr, match, pathRegex))
         {
+            if (matchedRoute != nullptr)
+            {
+                *matchedRoute = pathPattern;
+            }
             // Extract path parameters and add them to the request
             HttpRequest newReq(req); // 因为这里需要用这一次所以是可以改的
             extractPathParameters(match, newReq);
@@ -56,13 +68,17 @@ bool Router::route(const HttpRequest &req, HttpResponse *resp)
     }
 
     // 查找动态路由回调函数
-    for (const auto &[method, pathRegex, callback] : regexCallbacks_)
+    for (const auto &[method, pathPattern, pathRegex, callback] : regexCallbacks_)
     {
         std::smatch match;
         std::string pathStr(req.path());
         // 如果方法匹配并且动态路由匹配，则执行回调函数
         if (method == req.method() && std::regex_match(pathStr, match, pathRegex))
         {
+            if (matchedRoute != nullptr)
+            {
+                *matchedRoute = pathPattern;
+            }
              // Extract path parameters and add them to the request
             HttpRequest newReq(req); // 因为这里需要用这一次所以是可以改的
             extractPathParameters(match, newReq);

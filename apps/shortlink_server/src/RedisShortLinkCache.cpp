@@ -49,8 +49,9 @@ RedisReplyPtr makeReply(redisContext* context, const char* command)
 
 } // namespace
 
-RedisShortLinkCache::RedisShortLinkCache(Config config)
-    : config_(std::move(config))
+RedisShortLinkCache::RedisShortLinkCache(Config config, ShortLinkMetrics* metrics)
+    : config_(std::move(config)),
+      metrics_(metrics)
 {}
 
 std::optional<std::string> RedisShortLinkCache::getOriginalUrl(const std::string& code) const
@@ -62,6 +63,13 @@ std::optional<std::string> RedisShortLinkCache::getOriginalUrl(const std::string
     RedisContextPtr context(redisConnectWithTimeout(config_.host.c_str(), config_.port, timeout));
     if (!context || context->err)
     {
+        if (metrics_ != nullptr)
+        {
+            metrics_->recordCache(ShortLinkMetrics::CacheOperation::Get,
+                                  ShortLinkMetrics::CacheResult::Error);
+            metrics_->recordBackendError(ShortLinkMetrics::Backend::Redis,
+                                         ShortLinkMetrics::BackendOperation::Get);
+        }
         LOG_ERROR << "Redis cache get connection failed";
         return std::nullopt;
     }
@@ -71,6 +79,13 @@ std::optional<std::string> RedisShortLinkCache::getOriginalUrl(const std::string
         RedisReplyPtr selectReply(makeReply(context.get(), ("SELECT " + std::to_string(config_.database)).c_str()));
         if (!selectReply || selectReply->type == REDIS_REPLY_ERROR)
         {
+            if (metrics_ != nullptr)
+            {
+                metrics_->recordCache(ShortLinkMetrics::CacheOperation::Get,
+                                      ShortLinkMetrics::CacheResult::Error);
+                metrics_->recordBackendError(ShortLinkMetrics::Backend::Redis,
+                                             ShortLinkMetrics::BackendOperation::Get);
+            }
             LOG_ERROR << "Redis cache get SELECT failed";
             return std::nullopt;
         }
@@ -81,22 +96,47 @@ std::optional<std::string> RedisShortLinkCache::getOriginalUrl(const std::string
         redisCommand(context.get(), "GET %b", key.data(), key.size())));
     if (!reply)
     {
+        if (metrics_ != nullptr)
+        {
+            metrics_->recordCache(ShortLinkMetrics::CacheOperation::Get,
+                                  ShortLinkMetrics::CacheResult::Error);
+            metrics_->recordBackendError(ShortLinkMetrics::Backend::Redis,
+                                         ShortLinkMetrics::BackendOperation::Get);
+        }
         LOG_ERROR << "Redis cache get command failed";
         return std::nullopt;
     }
 
     if (reply->type == REDIS_REPLY_NIL)
     {
+        if (metrics_ != nullptr)
+        {
+            metrics_->recordCache(ShortLinkMetrics::CacheOperation::Get,
+                                  ShortLinkMetrics::CacheResult::Miss);
+        }
         return std::nullopt;
     }
 
     if (reply->type != REDIS_REPLY_STRING)
     {
+        if (metrics_ != nullptr)
+        {
+            metrics_->recordCache(ShortLinkMetrics::CacheOperation::Get,
+                                  ShortLinkMetrics::CacheResult::Error);
+            metrics_->recordBackendError(ShortLinkMetrics::Backend::Redis,
+                                         ShortLinkMetrics::BackendOperation::Get);
+        }
         LOG_ERROR << "Redis cache get returned unexpected reply type";
         return std::nullopt;
     }
 
-    return std::string(reply->str, static_cast<std::size_t>(reply->len));
+    const std::string originalUrl(reply->str, static_cast<std::size_t>(reply->len));
+    if (metrics_ != nullptr)
+    {
+        metrics_->recordCache(ShortLinkMetrics::CacheOperation::Get,
+                              ShortLinkMetrics::CacheResult::Hit);
+    }
+    return originalUrl;
 }
 
 bool RedisShortLinkCache::setOriginalUrl(const std::string& code, const std::string& originalUrl) const
@@ -108,6 +148,13 @@ bool RedisShortLinkCache::setOriginalUrl(const std::string& code, const std::str
     RedisContextPtr context(redisConnectWithTimeout(config_.host.c_str(), config_.port, timeout));
     if (!context || context->err)
     {
+        if (metrics_ != nullptr)
+        {
+            metrics_->recordCache(ShortLinkMetrics::CacheOperation::Set,
+                                  ShortLinkMetrics::CacheResult::Error);
+            metrics_->recordBackendError(ShortLinkMetrics::Backend::Redis,
+                                         ShortLinkMetrics::BackendOperation::Set);
+        }
         LOG_ERROR << "Redis cache set connection failed";
         return false;
     }
@@ -117,6 +164,13 @@ bool RedisShortLinkCache::setOriginalUrl(const std::string& code, const std::str
         RedisReplyPtr selectReply(makeReply(context.get(), ("SELECT " + std::to_string(config_.database)).c_str()));
         if (!selectReply || selectReply->type == REDIS_REPLY_ERROR)
         {
+            if (metrics_ != nullptr)
+            {
+                metrics_->recordCache(ShortLinkMetrics::CacheOperation::Set,
+                                      ShortLinkMetrics::CacheResult::Error);
+                metrics_->recordBackendError(ShortLinkMetrics::Backend::Redis,
+                                             ShortLinkMetrics::BackendOperation::Set);
+            }
             LOG_ERROR << "Redis cache set SELECT failed";
             return false;
         }
@@ -146,11 +200,30 @@ bool RedisShortLinkCache::setOriginalUrl(const std::string& code, const std::str
 
     if (!reply || reply->type == REDIS_REPLY_ERROR)
     {
+        if (metrics_ != nullptr)
+        {
+            metrics_->recordCache(ShortLinkMetrics::CacheOperation::Set,
+                                  ShortLinkMetrics::CacheResult::Error);
+            metrics_->recordBackendError(ShortLinkMetrics::Backend::Redis,
+                                         ShortLinkMetrics::BackendOperation::Set);
+        }
         LOG_ERROR << "Redis cache set command failed";
         return false;
     }
 
-    return reply->type == REDIS_REPLY_STATUS;
+    const bool success = reply->type == REDIS_REPLY_STATUS;
+    if (metrics_ != nullptr)
+    {
+        metrics_->recordCache(ShortLinkMetrics::CacheOperation::Set,
+                              success ? ShortLinkMetrics::CacheResult::Success
+                                      : ShortLinkMetrics::CacheResult::Error);
+        if (!success)
+        {
+            metrics_->recordBackendError(ShortLinkMetrics::Backend::Redis,
+                                         ShortLinkMetrics::BackendOperation::Set);
+        }
+    }
+    return success;
 }
 
 } // namespace shortlink

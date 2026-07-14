@@ -14,11 +14,37 @@ SERVER_PID=""
 
 cleanup()
 {
+    stop_server
+    rm -rf "${TMP_DIR}"
+}
+
+stop_server()
+{
     if [[ -n "${SERVER_PID}" ]] && kill -0 "${SERVER_PID}" 2>/dev/null; then
         kill "${SERVER_PID}" 2>/dev/null || true
         wait "${SERVER_PID}" 2>/dev/null || true
     fi
-    rm -rf "${TMP_DIR}"
+    SERVER_PID=""
+}
+
+start_server()
+{
+    stdbuf -oL -eL "${SERVER_BIN}" "${CONFIG_FILE}" > "${SERVER_LOG}" 2>&1 &
+    SERVER_PID="$!"
+
+    for _ in {1..50}; do
+        if ! kill -0 "${SERVER_PID}" 2>/dev/null; then
+            fail "shortlink_server exited before becoming ready"
+        fi
+
+        if curl -fsS "${BASE_URL}/api/health" >/dev/null 2>&1; then
+            return 0
+        fi
+
+        sleep 0.1
+    done
+
+    fail "health endpoint did not become ready at ${BASE_URL}"
 }
 
 fail()
@@ -52,11 +78,23 @@ expect_contains()
     fi
 }
 
+expect_not_contains()
+{
+    local value="$1"
+    local unexpected_substring="$2"
+    local message="$3"
+    if [[ "${value}" == *"${unexpected_substring}"* ]]; then
+        fail "${message}: did not expect ${unexpected_substring}"
+    fi
+}
+
 trap cleanup EXIT
 
 if [[ ! -x "${SERVER_BIN}" ]]; then
     fail "shortlink_server binary not found or not executable at ${SERVER_BIN}; build the project first"
 fi
+
+command -v stdbuf >/dev/null 2>&1 || fail "stdbuf is required for stable server log assertions"
 
 cat > "${CONFIG_FILE}" <<EOF
 server.name=HaoShortLinkSmoke
@@ -64,34 +102,23 @@ server.port=${PORT}
 server.thread_num=1
 storage.type=memory
 redis.enabled=false
+metrics.enabled=true
 EOF
 
-"${SERVER_BIN}" "${CONFIG_FILE}" > "${SERVER_LOG}" 2>&1 &
-SERVER_PID="$!"
-
-for _ in {1..50}; do
-    if ! kill -0 "${SERVER_PID}" 2>/dev/null; then
-        fail "shortlink_server exited before becoming ready"
-    fi
-
-    if curl -fsS "${BASE_URL}/api/health" >/dev/null 2>&1; then
-        break
-    fi
-
-    sleep 0.1
-done
-
-if ! curl -fsS "${BASE_URL}/api/health" >/dev/null 2>&1; then
-    fail "health endpoint did not become ready at ${BASE_URL}"
-fi
+start_server
 
 body_file="${TMP_DIR}/body.txt"
 header_file="${TMP_DIR}/headers.txt"
 
-status="$(curl -sS -o "${body_file}" -w "%{http_code}" "${BASE_URL}/api/health")"
+client_request_id="api-smoke-request-01"
+status="$(curl -sS -D "${header_file}" -o "${body_file}" -w "%{http_code}" \
+    -H "X-Request-ID: ${client_request_id}" \
+    "${BASE_URL}/api/health")"
 body="$(cat "${body_file}")"
+headers="$(tr -d '\r' < "${header_file}")"
 expect_eq "${status}" "200" "health status"
 expect_contains "${body}" '"status":"ok"' "health body"
+expect_contains "${headers}" "X-Request-ID: ${client_request_id}" "health request ID response header"
 echo "PASS: GET /api/health"
 
 original_url="https://example.com/api-smoke"
@@ -131,5 +158,41 @@ body="$(cat "${body_file}")"
 expect_eq "${status}" "400" "invalid URL status"
 expect_contains "${body}" '"code":"invalid_url"' "invalid URL body"
 echo "PASS: POST /api/short-links rejects invalid URL"
+
+status="$(curl -sS -D "${header_file}" -o "${body_file}" -w "%{http_code}" \
+    -H 'X-Request-ID: invalid request id' \
+    "${BASE_URL}/api/health")"
+headers="$(tr -d '\r' < "${header_file}")"
+generated_request_id="$(tr -d '\r' < "${header_file}" | sed -n 's/^X-Request-ID: \([0-9a-f]*\)$/\1/p')"
+expect_eq "${status}" "200" "health with invalid request ID status"
+if [[ ! "${generated_request_id}" =~ ^[0-9a-f]{32}$ ]]; then
+    fail "invalid client request ID should be replaced, got headers: ${headers}"
+fi
+echo "PASS: invalid X-Request-ID is replaced"
+
+expect_contains "$(cat "${SERVER_LOG}")" "event=http_request" "structured request log event"
+expect_contains "$(cat "${SERVER_LOG}")" "route=/s/:code" "structured request log route pattern"
+
+status="$(curl -sS -D "${header_file}" -o "${body_file}" -w "%{http_code}" \
+    "${BASE_URL}/metrics")"
+headers="$(tr -d '\r' < "${header_file}")"
+metrics_body="$(cat "${body_file}")"
+expect_eq "${status}" "200" "metrics status"
+expect_contains "${headers}" "Content-Type: text/plain; version=0.0.4; charset=utf-8" "metrics content type"
+expect_contains "${metrics_body}" 'haohttp_http_requests_total{method="GET",route="/api/health",status_class="2xx"}' "health HTTP metric"
+expect_contains "${metrics_body}" 'haohttp_http_request_duration_seconds_bucket{method="GET",route="/s/:code"' "redirect latency histogram"
+expect_contains "${metrics_body}" 'haohttp_shortlink_create_total{result="success",storage="memory"} 1' "successful create metric"
+expect_contains "${metrics_body}" 'haohttp_shortlink_create_total{result="invalid",storage="memory"} 1' "invalid create metric"
+expect_contains "${metrics_body}" 'haohttp_shortlink_redirect_total{result="success",source="memory"} 1' "successful redirect metric"
+expect_contains "${metrics_body}" 'haohttp_shortlink_redirect_total{result="not_found",source="memory"} 1' "missing redirect metric"
+expect_not_contains "${metrics_body}" "request_id" "metrics must not expose request IDs"
+echo "PASS: GET /metrics"
+
+stop_server
+sed -i 's/^metrics.enabled=true$/metrics.enabled=false/' "${CONFIG_FILE}"
+start_server
+status="$(curl -sS -o "${body_file}" -w "%{http_code}" "${BASE_URL}/metrics")"
+expect_eq "${status}" "404" "disabled metrics endpoint status"
+echo "PASS: metrics.enabled=false disables GET /metrics"
 
 echo "API smoke test passed"

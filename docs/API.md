@@ -1,7 +1,7 @@
 # API 设计
 
 状态：已建立基础版，持续维护
-当前实现：已实现短链接核心接口，支持内存存储、MySQL 持久化和可选 Redis 查询缓存
+当前实现：已实现短链接核心接口，支持内存存储、MySQL 持久化、可选 Redis 查询缓存和可配置的 Prometheus 指标入口
 
 ## 路径命名原则
 
@@ -125,6 +125,37 @@ Location: https://example.com/very/long/path
 错误场景：
 
 - 短码不存在：`404 Not Found`。
+
+## 可观测性接口
+
+### Prometheus 指标
+
+当前状态：已实现进程内指标与文本暴露；本地 Compose 已接入 Prometheus 抓取和 Grafana dashboard。
+
+```text
+GET /metrics
+```
+
+用途：
+
+以 Prometheus text exposition format 返回 HTTP 请求量、状态分类、延迟 histogram，以及短链创建、跳转、Redis 缓存和后端错误计数。
+
+配置：
+
+```text
+metrics.enabled=true
+```
+
+第一版默认启用；设置为 `false` 时不注册该路由，直连请求返回 `404 Not Found`。
+
+成功响应：
+
+```text
+200 OK
+Content-Type: text/plain; version=0.0.4; charset=utf-8
+```
+
+该入口用于服务内部采集。Nginx 默认不转发 `/metrics`，不应作为公开业务 API 暴露。
 
 ## 错误响应
 

@@ -1,16 +1,23 @@
 #include "http/HttpRequest.h"
 #include "http/HttpResponse.h"
 #include "middleware/MiddlewareChain.h"
+#include "metrics/HttpMetrics.h"
 #include "router/Router.h"
 #include "shortlink/MemoryShortLinkRepository.h"
 #include "shortlink/ShortLinkService.h"
+#include "shortlink/ShortLinkMetrics.h"
+#include "utils/RequestId.h"
 
 #include <muduo/net/Buffer.h>
 
 #include <iostream>
+#include <cctype>
 #include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <string>
+#include <thread>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -73,6 +80,7 @@ void testRouterExactCallback()
     http::HttpRequest req = makeRequest(http::HttpRequest::kGet, "/api/health");
     http::HttpResponse resp(false);
     bool called = false;
+    std::string matchedRoute;
 
     router.registerCallback(http::HttpRequest::kGet,
                             "/api/health",
@@ -83,8 +91,9 @@ void testRouterExactCallback()
                                 routedResp->setStatusMessage("OK");
                             });
 
-    expect(router.route(req, &resp), "exact route should match");
+    expect(router.route(req, &resp, &matchedRoute), "exact route should match");
     expect(called, "exact route callback should be called");
+    expect(matchedRoute == "/api/health", "exact route should return its registered path");
     expect(resp.getStatusCode() == http::HttpResponse::k200Ok, "exact route should update response");
 }
 
@@ -94,6 +103,7 @@ void testRouterDynamicCallbackPathParameters()
     http::HttpRequest req = makeRequest(http::HttpRequest::kGet, "/s/abc123");
     http::HttpResponse resp(false);
     bool called = false;
+    std::string matchedRoute;
 
     router.addRegexCallback(http::HttpRequest::kGet,
                             "/s/:code",
@@ -105,8 +115,9 @@ void testRouterDynamicCallbackPathParameters()
                                 routedResp->setStatusMessage("Found");
                             });
 
-    expect(router.route(req, &resp), "dynamic route should match");
+    expect(router.route(req, &resp, &matchedRoute), "dynamic route should match");
     expect(called, "dynamic route callback should be called");
+    expect(matchedRoute == "/s/:code", "dynamic route should return its registered pattern");
     expect(resp.getStatusCode() == http::HttpResponse::k302Found, "dynamic route should update response");
 }
 
@@ -126,6 +137,7 @@ void testRequestSwapClearsBodyState()
     req.setBody("{\"url\":\"https://example.com\"}");
     req.setContentLength(req.getBody().size());
     req.setPathParameters("param1", "old");
+    req.setRequestId("old-request-id");
 
     http::HttpRequest empty;
     req.swap(empty);
@@ -133,6 +145,189 @@ void testRequestSwapClearsBodyState()
     expect(req.getBody().empty(), "swap with default request should clear body");
     expect(req.contentLength() == 0, "swap with default request should clear content length");
     expect(req.getPathParameters("param1").empty(), "swap with default request should clear path parameters");
+    expect(req.requestId().empty(), "swap with default request should clear request ID");
+}
+
+void testRequestHeaderLookupIsCaseInsensitive()
+{
+    http::HttpRequest req;
+    const std::string header = "x-request-id: client-id";
+    const char* start = header.data();
+    const char* colon = start + header.find(':');
+    req.addHeader(start, colon, start + header.size());
+
+    expect(req.getHeader("X-Request-ID") == "client-id",
+           "HTTP header lookup should be case insensitive");
+}
+
+void testRequestIdValidationAndGeneration()
+{
+    expect(http::utils::isValidRequestId("client.Request_ID-01"),
+           "request ID should accept the documented safe character set");
+    expect(!http::utils::isValidRequestId(""), "empty request ID should be rejected");
+    expect(!http::utils::isValidRequestId("request id"), "request ID with spaces should be rejected");
+    expect(!http::utils::isValidRequestId(std::string(65, 'a')), "request ID over 64 characters should be rejected");
+
+    const std::string first = http::utils::generateRequestId();
+    const std::string second = http::utils::generateRequestId();
+    expect(first.size() == 32, "generated request ID should contain 32 characters");
+    expect(first != second, "generated request IDs should be unique within the process");
+    for (const unsigned char ch : first)
+    {
+        expect(std::isdigit(ch) || (ch >= 'a' && ch <= 'f'),
+               "generated request ID should use lowercase hexadecimal characters");
+    }
+}
+
+void testRequestIdConcurrentGeneration()
+{
+    constexpr int threadCount = 8;
+    constexpr int idsPerThread = 1000;
+    std::unordered_set<std::string> ids;
+    std::mutex idsMutex;
+    std::vector<std::thread> threads;
+
+    for (int i = 0; i < threadCount; ++i)
+    {
+        threads.emplace_back([&ids, &idsMutex]() {
+            for (int j = 0; j < idsPerThread; ++j)
+            {
+                const std::string requestId = http::utils::generateRequestId();
+                std::lock_guard<std::mutex> lock(idsMutex);
+                ids.insert(requestId);
+            }
+        });
+    }
+
+    for (std::thread& thread : threads)
+    {
+        thread.join();
+    }
+
+    expect(ids.size() == static_cast<size_t>(threadCount * idsPerThread),
+           "concurrent request ID generation should not produce duplicates");
+}
+
+void testHttpMetricsPrometheusRendering()
+{
+    http::metrics::HttpMetrics metrics;
+    metrics.registerRoute(http::HttpRequest::kGet, "/api/health");
+    metrics.record(http::HttpRequest::kGet,
+                   "/api/health",
+                   http::HttpResponse::k200Ok,
+                   0.0004);
+    metrics.record(http::HttpRequest::kGet,
+                   "/api/health",
+                   http::HttpResponse::k500InternalServerError,
+                   0.003);
+
+    const std::string rendered = metrics.renderPrometheus();
+    expect(rendered.find("haohttp_http_requests_total{method=\"GET\",route=\"/api/health\",status_class=\"2xx\"} 1") !=
+               std::string::npos,
+           "HTTP metrics should count successful requests");
+    expect(rendered.find("haohttp_http_requests_total{method=\"GET\",route=\"/api/health\",status_class=\"5xx\"} 1") !=
+               std::string::npos,
+           "HTTP metrics should count server errors");
+    expect(rendered.find("haohttp_http_request_duration_seconds_bucket{method=\"GET\",route=\"/api/health\",le=\"0.0005\"} 1") !=
+               std::string::npos,
+           "HTTP histogram should place fast request in first bucket");
+    expect(rendered.find("haohttp_http_request_duration_seconds_bucket{method=\"GET\",route=\"/api/health\",le=\"0.005\"} 2") !=
+               std::string::npos,
+           "HTTP histogram buckets should be cumulative");
+    expect(rendered.find("haohttp_http_request_duration_seconds_bucket{method=\"GET\",route=\"/api/health\",le=\"+Inf\"} 2") !=
+               std::string::npos,
+           "HTTP histogram infinite bucket should include every request");
+    expect(rendered.find("haohttp_http_request_duration_seconds_count{method=\"GET\",route=\"/api/health\"} 2") !=
+               std::string::npos,
+           "HTTP histogram should expose the observation count");
+}
+
+void testHttpMetricsConcurrentUpdates()
+{
+    constexpr int threadCount = 8;
+    constexpr int recordsPerThread = 1000;
+    http::metrics::HttpMetrics metrics;
+    metrics.registerRoute(http::HttpRequest::kGet, "/s/:code");
+    std::vector<std::thread> threads;
+
+    for (int i = 0; i < threadCount; ++i)
+    {
+        threads.emplace_back([&metrics]() {
+            for (int j = 0; j < recordsPerThread; ++j)
+            {
+                metrics.record(http::HttpRequest::kGet,
+                               "/s/:code",
+                               http::HttpResponse::k302Found,
+                               0.001);
+            }
+        });
+    }
+    for (std::thread& thread : threads)
+    {
+        thread.join();
+    }
+
+    const std::string expected =
+        "haohttp_http_requests_total{method=\"GET\",route=\"/s/:code\",status_class=\"3xx\"} " +
+        std::to_string(threadCount * recordsPerThread);
+    expect(metrics.renderPrometheus().find(expected) != std::string::npos,
+           "concurrent HTTP metric updates should not lose requests");
+}
+
+void testShortLinkMetricsPrometheusRendering()
+{
+    shortlink::ShortLinkMetrics metrics;
+    metrics.recordCreate(shortlink::ShortLinkMetrics::CreateResult::Success,
+                         shortlink::ShortLinkMetrics::Storage::Memory);
+    metrics.recordRedirect(shortlink::ShortLinkMetrics::RedirectResult::NotFound,
+                           shortlink::ShortLinkMetrics::RedirectSource::Mysql);
+    metrics.recordCache(shortlink::ShortLinkMetrics::CacheOperation::Get,
+                        shortlink::ShortLinkMetrics::CacheResult::Miss);
+    metrics.recordBackendError(shortlink::ShortLinkMetrics::Backend::Redis,
+                               shortlink::ShortLinkMetrics::BackendOperation::Get);
+
+    const std::string rendered = metrics.renderPrometheus();
+    expect(rendered.find("haohttp_shortlink_create_total{result=\"success\",storage=\"memory\"} 1") !=
+               std::string::npos,
+           "short link metrics should count successful memory creates");
+    expect(rendered.find("haohttp_shortlink_redirect_total{result=\"not_found\",source=\"mysql\"} 1") !=
+               std::string::npos,
+           "short link metrics should count missing MySQL redirects");
+    expect(rendered.find("haohttp_shortlink_cache_operations_total{operation=\"get\",result=\"miss\"} 1") !=
+               std::string::npos,
+           "short link metrics should count Redis misses");
+    expect(rendered.find("haohttp_shortlink_backend_errors_total{backend=\"redis\",operation=\"get\"} 1") !=
+               std::string::npos,
+           "short link metrics should count Redis get errors");
+}
+
+void testShortLinkMetricsConcurrentUpdates()
+{
+    constexpr int threadCount = 8;
+    constexpr int recordsPerThread = 1000;
+    shortlink::ShortLinkMetrics metrics;
+    std::vector<std::thread> threads;
+
+    for (int i = 0; i < threadCount; ++i)
+    {
+        threads.emplace_back([&metrics]() {
+            for (int j = 0; j < recordsPerThread; ++j)
+            {
+                metrics.recordCreate(shortlink::ShortLinkMetrics::CreateResult::Success,
+                                     shortlink::ShortLinkMetrics::Storage::Memory);
+            }
+        });
+    }
+    for (std::thread& thread : threads)
+    {
+        thread.join();
+    }
+
+    const std::string expected =
+        "haohttp_shortlink_create_total{result=\"success\",storage=\"memory\"} " +
+        std::to_string(threadCount * recordsPerThread);
+    expect(metrics.renderPrometheus().find(expected) != std::string::npos,
+           "concurrent short link metric updates should not lose operations");
 }
 
 void testResponseJsonErrorEscapesBody()
@@ -313,6 +508,13 @@ int main()
         {"router dynamic callback path parameters", testRouterDynamicCallbackPathParameters},
         {"router no match", testRouterNoMatch},
         {"request swap clears body state", testRequestSwapClearsBodyState},
+        {"request header lookup is case insensitive", testRequestHeaderLookupIsCaseInsensitive},
+        {"request ID validation and generation", testRequestIdValidationAndGeneration},
+        {"request ID concurrent generation", testRequestIdConcurrentGeneration},
+        {"HTTP metrics Prometheus rendering", testHttpMetricsPrometheusRendering},
+        {"HTTP metrics concurrent updates", testHttpMetricsConcurrentUpdates},
+        {"short link metrics Prometheus rendering", testShortLinkMetricsPrometheusRendering},
+        {"short link metrics concurrent updates", testShortLinkMetricsConcurrentUpdates},
         {"response JSON error escapes body", testResponseJsonErrorEscapesBody},
         {"response redirect", testResponseRedirect},
         {"middleware order", testMiddlewareOrder},

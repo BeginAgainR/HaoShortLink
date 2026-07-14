@@ -54,6 +54,12 @@ public:
     const std::map<std::string, std::string>& headers() const
     { return headers_; }
 
+    void setRequestId(const std::string& requestId)
+    { requestId_ = requestId; }
+
+    const std::string& requestId() const
+    { return requestId_; }
+
     void setBody(const std::string& body) { content_ = body; }
     void setBody(const char* start, const char* end) 
     { 
@@ -82,6 +88,7 @@ private:
     std::unordered_map<std::string, std::string> queryParameters_; // 查询参数
     muduo::Timestamp                             receiveTime_; // 接收时间
     std::map<std::string, std::string>           headers_; // 请求头
+    std::string                                  requestId_; // 请求关联标识
     std::string                                  content_; // 请求体
     uint64_t                                     contentLength_ { 0 }; // 请求体长度
 };  

@@ -4,6 +4,7 @@
 #include "shortlink/RedisCachedShortLinkRepository.h"
 #include "shortlink/RedisShortLinkCache.h"
 #include "shortlink/ShortLinkService.h"
+#include "shortlink/ShortLinkMetrics.h"
 #include "utils/Config.h"
 #include "utils/JsonUtil.h"
 #include "utils/db/DbConnectionPool.h"
@@ -24,6 +25,7 @@ struct ServerConfig
     std::string name = "HaoShortLink";
     int port = 8080;
     int threadNum = 4;
+    bool metricsEnabled = true;
     std::string storageType = "memory";
     std::string mysqlHost = "tcp://127.0.0.1:3306";
     std::string mysqlUser = "root";
@@ -55,6 +57,7 @@ ServerConfig loadServerConfig(const std::string& configPath)
         serverConfig.name = config.getString("server.name", serverConfig.name);
         serverConfig.port = config.getInt("server.port", serverConfig.port);
         serverConfig.threadNum = config.getInt("server.thread_num", serverConfig.threadNum);
+        serverConfig.metricsEnabled = config.getBool("metrics.enabled", serverConfig.metricsEnabled);
         serverConfig.storageType = config.getString("storage.type", serverConfig.storageType);
         serverConfig.mysqlHost = config.getString("mysql.host", serverConfig.mysqlHost);
         serverConfig.mysqlUser = config.getString("mysql.user", serverConfig.mysqlUser);
@@ -277,10 +280,13 @@ void handleHealth(const http::HttpRequest& req, http::HttpResponse* resp)
 
 void handleCreateShortLink(const http::HttpRequest& req,
                            http::HttpResponse* resp,
-                           shortlink::ShortLinkService* service)
+                           shortlink::ShortLinkService* service,
+                           shortlink::ShortLinkMetrics* metrics,
+                           shortlink::ShortLinkMetrics::Storage storage)
 {
     if (!hasJsonContentType(req))
     {
+        metrics->recordCreate(shortlink::ShortLinkMetrics::CreateResult::Invalid, storage);
         resp->setErrorResponse(http::HttpResponse::k400BadRequest,
                                "invalid_request",
                                "Content-Type must be application/json");
@@ -290,16 +296,26 @@ void handleCreateShortLink(const http::HttpRequest& req,
     const std::optional<std::string> originalUrl = parseUrlFromCreateRequest(req.getBody());
     if (!originalUrl)
     {
+        metrics->recordCreate(shortlink::ShortLinkMetrics::CreateResult::Invalid, storage);
         resp->setErrorResponse(http::HttpResponse::k400BadRequest,
                                "invalid_request",
                                "Request body must contain a string url field");
         return;
     }
 
-    const std::optional<shortlink::ShortLinkService::ShortLink> shortLink =
-        service->createShortLink(*originalUrl);
+    std::optional<shortlink::ShortLinkService::ShortLink> shortLink;
+    try
+    {
+        shortLink = service->createShortLink(*originalUrl);
+    }
+    catch (...)
+    {
+        metrics->recordCreate(shortlink::ShortLinkMetrics::CreateResult::Error, storage);
+        throw;
+    }
     if (!shortLink)
     {
+        metrics->recordCreate(shortlink::ShortLinkMetrics::CreateResult::Invalid, storage);
         resp->setErrorResponse(http::HttpResponse::k400BadRequest,
                                "invalid_url",
                                "URL must start with http:// or https://");
@@ -316,6 +332,7 @@ void handleCreateShortLink(const http::HttpRequest& req,
                     http::HttpResponse::k201Created,
                     "Created",
                     body);
+    metrics->recordCreate(shortlink::ShortLinkMetrics::CreateResult::Success, storage);
 }
 
 void handleRedirect(const http::HttpRequest& req,
@@ -335,6 +352,20 @@ void handleRedirect(const http::HttpRequest& req,
     resp->setRedirect(*originalUrl);
 }
 
+void handleMetrics(const http::HttpRequest& req,
+                   http::HttpResponse* resp,
+                   const http::HttpServer* server,
+                   const shortlink::ShortLinkMetrics* shortLinkMetrics)
+{
+    (void)req;
+    const std::string body = server->prometheusMetrics() + shortLinkMetrics->renderPrometheus();
+    resp->setStatusCode(http::HttpResponse::k200Ok);
+    resp->setStatusMessage("OK");
+    resp->setContentType("text/plain; version=0.0.4; charset=utf-8");
+    resp->setContentLength(body.size());
+    resp->setBody(body);
+}
+
 } // namespace
 
 int main(int argc, char* argv[])
@@ -346,6 +377,11 @@ int main(int argc, char* argv[])
              << " with " << config.threadNum << " worker threads";
 
     http::HttpServer server(config.port, config.name);
+    shortlink::ShortLinkMetrics shortLinkMetrics;
+    const shortlink::ShortLinkMetrics::Storage metricsStorage =
+        config.storageType == "mysql"
+            ? shortlink::ShortLinkMetrics::Storage::Mysql
+            : shortlink::ShortLinkMetrics::Storage::Memory;
     std::unique_ptr<shortlink::ShortLinkRepository> primaryShortLinkRepository;
     std::unique_ptr<shortlink::ShortLinkRepository> shortLinkRepository;
     if (config.storageType == "mysql")
@@ -355,7 +391,8 @@ int main(int argc, char* argv[])
                                                        config.mysqlPassword,
                                                        config.mysqlDatabase,
                                                        static_cast<std::size_t>(config.mysqlPoolSize));
-        primaryShortLinkRepository = std::make_unique<shortlink::MySqlShortLinkRepository>();
+        primaryShortLinkRepository =
+            std::make_unique<shortlink::MySqlShortLinkRepository>(&shortLinkMetrics);
         if (config.redisEnabled)
         {
             shortlink::RedisShortLinkCache::Config redisConfig;
@@ -366,7 +403,8 @@ int main(int argc, char* argv[])
             redisConfig.keyPrefix = config.redisKeyPrefix;
             shortLinkRepository = std::make_unique<shortlink::RedisCachedShortLinkRepository>(
                 *primaryShortLinkRepository,
-                shortlink::RedisShortLinkCache(redisConfig));
+                shortlink::RedisShortLinkCache(redisConfig, &shortLinkMetrics),
+                &shortLinkMetrics);
         }
         else
         {
@@ -379,20 +417,34 @@ int main(int argc, char* argv[])
         {
             LOG_INFO << "redis.enabled is ignored when storage.type is not mysql";
         }
-        shortLinkRepository = std::make_unique<shortlink::MemoryShortLinkRepository>();
+        shortLinkRepository =
+            std::make_unique<shortlink::MemoryShortLinkRepository>(&shortLinkMetrics);
     }
 
     shortlink::ShortLinkService shortLinkService(*shortLinkRepository);
 
     server.setThreadNum(config.threadNum);
     server.Get("/api/health", handleHealth);
-    server.Post("/api/short-links", [&shortLinkService](const http::HttpRequest& req, http::HttpResponse* resp) {
-        handleCreateShortLink(req, resp, &shortLinkService);
+    server.Post("/api/short-links", [&shortLinkService,
+                                     &shortLinkMetrics,
+                                     metricsStorage](const http::HttpRequest& req, http::HttpResponse* resp) {
+        handleCreateShortLink(req,
+                              resp,
+                              &shortLinkService,
+                              &shortLinkMetrics,
+                              metricsStorage);
     });
     server.addRoute(http::HttpRequest::kGet,
                     "/s/:code",
                     [&shortLinkService](const http::HttpRequest& req, http::HttpResponse* resp) {
                         handleRedirect(req, resp, &shortLinkService);
                     });
+    if (config.metricsEnabled)
+    {
+        server.Get("/metrics", [&server, &shortLinkMetrics](const http::HttpRequest& req,
+                                                            http::HttpResponse* resp) {
+            handleMetrics(req, resp, &server, &shortLinkMetrics);
+        });
+    }
     server.start();
 }

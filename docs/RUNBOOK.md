@@ -27,7 +27,7 @@
 - OrbStack Linux VM：`haoHTTP`
 - 进入方式：`ssh haoHTTP@orb`
 - 项目路径：`/Users/hao/Code/haoHTTP`
-- 当前分支：`refactor/hao-shortlink-cleanup`
+- 当前分支：`refactor/v1.5-observability`
 
 当前 VM 已安装：
 
@@ -114,6 +114,7 @@ server.name=HaoShortLink
 server.port=8080
 server.thread_num=4
 log.level=INFO
+metrics.enabled=true
 storage.type=memory
 redis.enabled=false
 ```
@@ -127,6 +128,7 @@ redis.enabled=false
 - `memory` 是默认存储方式。
 - `mysql` 需要先创建 `short_links` 表并配置 MySQL 连接信息。
 - `redis.enabled` 是 MySQL 存储模式下的可选查询缓存开关，默认关闭。
+- `metrics.enabled` 控制直连服务的 `GET /metrics` 路由，默认启用。
 
 建议：
 
@@ -145,6 +147,8 @@ redis.enabled=false
 - Redis
 - `shortlink_server`
 - Nginx
+- Prometheus
+- Grafana
 
 当前不编排：
 
@@ -152,9 +156,11 @@ redis.enabled=false
 
 运行位置：
 
-- MySQL、Redis、`shortlink_server` 和 Nginx 容器运行在 OrbStack Docker 中。
+- MySQL、Redis、`shortlink_server`、Nginx、Prometheus 和 Grafana 容器运行在 OrbStack Docker 中。
 - Nginx 容器通过 Compose 服务名 `shortlink_server` 访问业务服务。
 - `shortlink_server` 容器通过 Compose 服务名 `mysql`、`redis` 访问依赖。
+- Prometheus 通过 Compose 服务名 `shortlink_server` 抓取 `/metrics`。
+- Grafana 通过 Compose 服务名 `prometheus` 查询指标。
 - 如果在 `haoHTTP` VM 中手工运行 `shortlink_server`，访问 OrbStack Docker 发布端口时使用 `docker.orb.internal`。
 - 如果在 `haoHTTP` VM 中做 Redis 性能诊断，`docker.orb.internal` 或显式 IPv4 可能触发本地 OrbStack 网络慢路径；
   可用 `getent ahosts docker.orb.internal` 查看当前 IPv6 地址，并用该 IPv6 字面地址临时验证 Redis 延迟。
@@ -167,6 +173,8 @@ Nginx 容器端口 80 -> OrbStack Docker 发布端口 8080
 shortlink_server 容器端口 8080 -> OrbStack Docker 发布端口 18080
 MySQL 容器端口 3306 -> OrbStack Docker 发布端口 13306
 Redis 容器端口 6379 -> OrbStack Docker 发布端口 16379
+Prometheus 容器端口 9090 -> 127.0.0.1:9090
+Grafana 容器端口 3000 -> 127.0.0.1:3000
 ```
 
 说明：
@@ -174,6 +182,7 @@ Redis 容器端口 6379 -> OrbStack Docker 发布端口 16379
 - 使用 `8080` 作为 Nginx 本地统一 HTTP 入口。
 - `18080` 保留为 `shortlink_server` 直连调试入口。
 - 使用 `13306` 和 `16379` 是为了避免和本地已有 MySQL、Redis 默认端口冲突。
+- Prometheus 和 Grafana 只绑定 `127.0.0.1`，用于本机开发观察，不作为公开入口。
 - MySQL 容器第一次初始化空数据目录时，会按文件名顺序执行 `apps/shortlink_server/sql/` 下的 SQL 脚本。
 - 如果 MySQL 数据卷已经存在，初始化 SQL 不会重复执行。
 - 开发环境用户名、密码和数据库名以 `compose.yaml` 为准。
@@ -192,6 +201,8 @@ SHORTLINK_SERVER_BASE_IMAGE=docker.m.daocloud.io/library/ubuntu:22.04 \
 SHORTLINK_NGINX_IMAGE=docker.m.daocloud.io/library/nginx:alpine \
 SHORTLINK_MYSQL_IMAGE=docker.m.daocloud.io/library/mysql:8.0 \
 SHORTLINK_REDIS_IMAGE=docker.m.daocloud.io/library/redis:7-alpine \
+SHORTLINK_PROMETHEUS_IMAGE=docker.m.daocloud.io/prom/prometheus:v3.13.0 \
+SHORTLINK_GRAFANA_IMAGE=docker.m.daocloud.io/grafana/grafana:12.4.3-security-02 \
 docker compose up -d --build
 ```
 
@@ -221,6 +232,8 @@ docker compose logs mysql
 docker compose logs redis
 docker compose logs shortlink_server
 docker compose logs nginx
+docker compose logs prometheus
+docker compose logs grafana
 ```
 
 通过 Nginx 验证服务健康检查：
@@ -248,6 +261,45 @@ curl -i http://127.0.0.1:8080/s/000001
 ```bash
 curl -i http://127.0.0.1:18080/api/health
 ```
+
+直连服务查看 Prometheus 文本指标：
+
+```bash
+curl -i http://127.0.0.1:18080/metrics
+```
+
+Nginx 默认不转发 `/metrics`。以下请求应返回 Nginx 自身的 `404`：
+
+```bash
+curl -i http://127.0.0.1:8080/metrics
+```
+
+打开 Prometheus：
+
+```text
+http://127.0.0.1:9090
+```
+
+`Status -> Target health` 中的 `hao-shortlink` target 应为 `UP`。
+
+打开 Grafana：
+
+```text
+http://127.0.0.1:3000
+```
+
+首次初始化的本地默认登录为 `admin` / `admin`，可以通过 `GRAFANA_ADMIN_USER` 和
+`GRAFANA_ADMIN_PASSWORD` 环境变量覆盖。已有 `hao_shortlink_grafana_data` 数据卷时，管理员
+凭据继续使用卷内保存的值。进入 `Dashboards -> HaoShortLink` 后可打开 `HaoShortLink Overview`。
+
+执行完整监控冒烟验证：
+
+```bash
+bash tests/scripts/monitoring_smoke_test.sh
+```
+
+脚本会启动 Compose、制造创建和跳转流量、验证 Prometheus target 与业务指标、验证 Grafana
+数据源和 dashboard、确认 Nginx 不暴露 `/metrics`，并重建 Prometheus / Grafana 容器检查历史数据和 dashboard。
 
 验证 MySQL 表结构：
 
@@ -303,8 +355,8 @@ docker compose down -v
 注意：
 
 - `docker compose` 使用 OrbStack 自带 Docker，不在 `haoHTTP` VM 内执行。
-- `docker compose down` 会停止并删除容器，但默认保留 MySQL 和 Redis 数据卷。
-- `docker compose down -v` 会删除数据卷，MySQL 数据也会被清空。
+- `docker compose down` 会停止并删除容器，但默认保留 MySQL、Redis、Prometheus 和 Grafana 数据卷。
+- `docker compose down -v` 会删除全部数据卷，MySQL 数据、Redis 数据和监控历史也会被清空。
 
 ## 服务启动
 

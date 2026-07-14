@@ -1,7 +1,7 @@
 # 测试计划
 
-状态：持续维护；当前基线为 v1.4 全量回归通过
-当前实现：已建立框架与业务基础测试、API 冒烟、MySQL / Redis 集成、Redis 不可用回退、异常场景和 Compose 编排入口；增强后的 CI 已通过构建、CTest、API smoke、脚本语法和依赖集成验证，v1.4.7 全量回归已完成。
+状态：持续维护；当前基线为 v1.5.4 自动化、性能回归和文档收口通过
+当前实现：已建立框架与业务基础测试、API 冒烟、MySQL / Redis 集成、Redis 不可用回退、异常场景、Compose 编排和监控冒烟入口；CI 已覆盖构建、CTest、API smoke、脚本语法、依赖集成以及 Prometheus / Grafana 端到端验证。
 
 ## v1.3 执行顺序
 
@@ -37,10 +37,11 @@ v1.3 的目标是把当前手工验证沉淀为可重复执行的测试体系，
    - 状态：已完成第一版 workflow，核心命令链路已在 Linux VM 中验证，GitHub Actions 云端 CI 已通过。
    - 第一版覆盖 Linux 构建、CTest 和 API 冒烟测试。
    - 当前增强增加 Bash 语法检查、MySQL / Redis Compose 集成和 Redis 不可用 fallback。
+   - v1.5.4 以独立并行 job 增加 Prometheus / Grafana 完整监控冒烟，避免延长原有构建和依赖测试的串行路径。
 
 ## CI 当前方案
 
-当前 CI 在第一版 Linux 构建、CTest 和 API smoke 基础上，增加脚本语法与 MySQL / Redis 依赖集成验证。
+当前 CI 在第一版 Linux 构建、CTest 和 API smoke 基础上，增加脚本语法、MySQL / Redis 依赖集成和独立监控冒烟验证。
 
 当前 workflow：`.github/workflows/ci.yml`。
 
@@ -54,28 +55,30 @@ v1.3 的目标是把当前手工验证沉淀为可重复执行的测试体系，
 - 安装 C++ 构建依赖和运行测试所需工具。
 - 准备 `muduo_base` 和 `muduo_net`。
 - 执行 CMake 配置和构建。
-- 执行 CTest，覆盖框架基础测试和短链业务纯逻辑测试。
-- 执行 API 冒烟测试，使用内存存储模式验证健康检查、创建短链、短码跳转和基础错误响应。
+- 执行 CTest，覆盖框架基础测试、短链业务纯逻辑测试、request ID 和指标并发更新 / Prometheus 文本渲染。
+- 执行 API 冒烟测试，使用内存存储模式验证健康检查、创建短链、短码跳转、基础错误响应和可配置 `/metrics`。
 - 检查 `tests/scripts/*.sh` 的 Bash 语法。
 - 通过 Docker Compose 启动 MySQL、Redis，执行持久化、缓存回填和 Redis 不可用 fallback 测试。
+- 通过独立并行 job 启动完整 Compose，验证 Nginx、Prometheus scrape / 查询、Grafana datasource / dashboard、`/metrics` 暴露边界以及 Prometheus / Grafana 容器重建后的数据恢复。
 - muduo 构建命令兼容新版 CMake 对旧项目最低版本策略的检查。
 
-当前暂不覆盖：
+当前 CI 暂不覆盖：
 
-- Nginx 反向代理验证。
-- 压测、限流和可观测性验证。
+- 压测和限流。
+- 生产告警、长期容量规划和 liveness / readiness 拆分。
 
 依赖集成 CI 边界：
 
 - GitHub runner 使用 `127.0.0.1` 访问 Compose 发布端口，不使用 OrbStack 的 `docker.orb.internal` 或 IPv6 规避地址。
 - 失败时输出 MySQL / Redis 容器日志，结束时清理容器和临时数据卷。
+- 监控冒烟使用独立 job，固定 Prometheus / Grafana 镜像版本；失败时输出监控链路日志，结束时清理四个 named volume。
 - 当前不把环境敏感的性能基线作为 PR 硬门禁。
 
 最近一次增强 CI 验证：
 
-- commit：`6170d40`。
-- GitHub Actions run：`29138145564`。
-- 结果：checkout v7、Shell 语法、Linux 构建、CTest、API smoke、MySQL / Redis 集成和 Redis 不可用 fallback 全部通过。
+- commit：`f20f8b8`。
+- GitHub Actions run：`29330453299`。
+- 结果：`Linux build and tests` 与 `Prometheus and Grafana smoke` 两个 job 全部通过；监控 job 总耗时约 2 分钟，完整 smoke 步骤约 1 分 43 秒。
 
 ## 当前测试入口
 
@@ -88,6 +91,7 @@ cmake --build /tmp/haoHTTP-build
 ctest --test-dir /tmp/haoHTTP-build --output-on-failure
 bash tests/scripts/api_smoke_test.sh
 HAOHTTP_TEST_HOST=haoHTTP@orb bash tests/scripts/run_integration_with_compose.sh
+bash tests/scripts/monitoring_smoke_test.sh
 ```
 
 ## 测试分层
@@ -101,17 +105,27 @@ HAOHTTP_TEST_HOST=haoHTTP@orb bash tests/scripts/run_integration_with_compose.sh
 
 当前状态：已通过 Linux VM 构建验证、v1.1 干净克隆验证、v1.2 本地干净克隆 Compose 验证、
 v1.3 最小测试骨架验证、第一批框架基础测试验证、短链业务纯逻辑测试验证、API 冒烟测试验证、
-MySQL / Redis 集成测试验证、Redis 不可用回退测试验证、Compose 依赖编排验证、CI 第一版核心命令链路验证、GitHub Actions 云端 CI 验证和 v1.4.7 全量回归验证。
+MySQL / Redis 集成测试验证、Redis 不可用回退测试验证、Compose 依赖编排验证、CI 第一版核心命令链路验证、
+GitHub Actions 云端 CI 验证、v1.4.7 全量回归验证、v1.5.2 指标验证、v1.5.3 本地监控链路验证和 v1.5.4 监控 CI / 性能回归验证。
 
 最近一次验证：
 
-- 环境：OrbStack Linux VM `haoHTTP`
-- 类型：v1.4.7 全量回归验证
-- 分支：`refactor/v1.3-tests-ci`
+- 环境：OrbStack Linux VM `haoHTTP`、OrbStack Docker 与 GitHub Actions `ubuntu-22.04`
+- 类型：v1.5.4 自动化验证和代表性性能回归
+- 分支：`refactor/v1.5-observability`
 - 项目路径：`/Users/hao/Code/haoHTTP`
 - 构建目录：`/tmp/haoHTTP-build`
-- 命令：Linux VM 中执行构建、CTest、`api_smoke_test.sh` 和 `shortlink_exception_scenarios_test.sh`；Mac 侧通过 `HAOHTTP_TEST_HOST=haoHTTP@orb bash tests/scripts/run_integration_with_compose.sh` 编排依赖并执行集成与 fallback 测试。
-- 结果：Linux VM 中 `shortlink_server` 构建通过，CTest `1/1`、API smoke、MySQL / Redis 集成、Redis 不可用 fallback 和异常场景脚本均通过；独立干净克隆目录为 `/tmp/haoHTTP-v1.4-clean.fjetXo`，异常场景 artifact 为 `/tmp/haohttp-exception-scenarios.EUZdzv`
+- 命令：GitHub Actions 执行 Linux build/tests 和独立监控 smoke；Linux VM 对 v1.4.0 / v1.5 干净克隆执行三轮 20000 请求 `hey` health / memory redirect 对照。
+- 结果：CI run `29330453299` 两个 job 均通过；性能回归错误率均为 0，health 未观察到回归，memory redirect 中位 QPS 约下降 8.3%、平均延迟约增加 0.019ms，P99 范围未扩大。
+
+上一阶段验证：
+
+- v1.5.2 已通过进程内指标、`/metrics`、异常并发和 Nginx 暴露边界验证；异常场景 artifact 为 `/tmp/haohttp-exception-scenarios.OXKV8O`。
+- v1.5.1 commit `15c75bd` 已完成独立干净克隆构建、CTest 和 API smoke，目录为 `/tmp/haoHTTP-v1.5.1-clean.44T2tu`。
+
+- v1.4.7 已完成 Linux VM 全量回归和独立干净克隆验证。
+- CTest、API smoke、MySQL / Redis 集成、Redis 不可用 fallback 和异常场景脚本均通过。
+- 独立干净克隆目录为 `/tmp/haoHTTP-v1.4-clean.fjetXo`，异常场景 artifact 为 `/tmp/haohttp-exception-scenarios.EUZdzv`。
 
 补充验证：
 

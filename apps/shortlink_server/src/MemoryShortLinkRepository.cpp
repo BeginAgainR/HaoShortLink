@@ -30,15 +30,38 @@ MemoryShortLinkRepository::create(const std::string& originalUrl)
 
 std::optional<std::string> MemoryShortLinkRepository::findOriginalUrl(const std::string& code) const
 {
-    std::lock_guard<std::mutex> lock(mutex_);
-
-    const auto it = links_.find(code);
-    if (it == links_.end())
+    try
     {
-        return std::nullopt;
-    }
+        std::lock_guard<std::mutex> lock(mutex_);
 
-    return it->second;
+        const auto it = links_.find(code);
+        if (it == links_.end())
+        {
+            if (metrics_ != nullptr)
+            {
+                metrics_->recordRedirect(ShortLinkMetrics::RedirectResult::NotFound,
+                                         ShortLinkMetrics::RedirectSource::Memory);
+            }
+            return std::nullopt;
+        }
+
+        const std::string originalUrl = it->second;
+        if (metrics_ != nullptr)
+        {
+            metrics_->recordRedirect(ShortLinkMetrics::RedirectResult::Success,
+                                     ShortLinkMetrics::RedirectSource::Memory);
+        }
+        return originalUrl;
+    }
+    catch (...)
+    {
+        if (metrics_ != nullptr)
+        {
+            metrics_->recordRedirect(ShortLinkMetrics::RedirectResult::Error,
+                                     ShortLinkMetrics::RedirectSource::Memory);
+        }
+        throw;
+    }
 }
 
 std::string MemoryShortLinkRepository::encodeBase62(std::uint64_t value)
