@@ -17,6 +17,7 @@ jobs:
   build-and-test:
     name: Linux build and tests
     runs-on: ubuntu-22.04
+    timeout-minutes: 30
 
     env:
       BUILD_DIR: /tmp/haoHTTP-build

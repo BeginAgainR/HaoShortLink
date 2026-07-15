@@ -127,7 +127,7 @@ REMOTE_CONFIG="${REMOTE_TMP_DIR}/server.conf"
 REMOTE_LOG="${REMOTE_TMP_DIR}/shortlink_server.log"
 copy_to_test_host "${LOCAL_CONFIG}" "${REMOTE_CONFIG}"
 
-SERVER_PID="$(run_on_test_host "cd '${TEST_WORKDIR}' && nohup '${SERVER_BIN}' '${REMOTE_CONFIG}' > '${REMOTE_LOG}' 2>&1 & echo \$!")"
+SERVER_PID="$(run_on_test_host "cd '${TEST_WORKDIR}' || exit 1; nohup '${SERVER_BIN}' '${REMOTE_CONFIG}' </dev/null > '${REMOTE_LOG}' 2>&1 & echo \$!")"
 [[ "${SERVER_PID}" =~ ^[0-9]+$ ]] || fail "failed to start shortlink_server on test host"
 
 wait_for_remote_status "/api/health/ready" "200"
