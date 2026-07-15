@@ -7,6 +7,36 @@ namespace http
 namespace db 
 {
 
+namespace
+{
+
+std::shared_ptr<sql::Connection> openConnection(const std::string& host,
+                                                const std::string& user,
+                                                const std::string& password,
+                                                const std::string& database,
+                                                unsigned int timeoutSeconds,
+                                                bool setIoTimeouts)
+{
+    sql::ConnectOptionsMap options;
+    options["hostName"] = host;
+    options["userName"] = user;
+    options["password"] = password;
+    options["schema"] = database;
+    const int timeout = static_cast<int>(timeoutSeconds);
+    options["OPT_CONNECT_TIMEOUT"] = timeout;
+    options["OPT_RECONNECT"] = true;
+    if (setIoTimeouts)
+    {
+        options["OPT_READ_TIMEOUT"] = timeout;
+        options["OPT_WRITE_TIMEOUT"] = timeout;
+    }
+
+    sql::mysql::MySQL_Driver* driver = sql::mysql::get_mysql_driver_instance();
+    return std::shared_ptr<sql::Connection>(driver->connect(options));
+}
+
+} // namespace
+
 DbConnection::DbConnection(const std::string& host,
                          const std::string& user,
                          const std::string& password,
@@ -18,15 +48,9 @@ DbConnection::DbConnection(const std::string& host,
 {
     try 
     {
-        sql::mysql::MySQL_Driver* driver = sql::mysql::get_mysql_driver_instance();
-        conn_.reset(driver->connect(host_, user_, password_));
+        connect();
         if (conn_) 
         {
-            conn_->setSchema(database_);
-            
-            // 设置连接属性
-            conn_->setClientOption("OPT_RECONNECT", "true");
-            conn_->setClientOption("OPT_CONNECT_TIMEOUT", "10");
             conn_->setClientOption("multi_statements", "false");
             
             // 设置字符集
@@ -41,6 +65,11 @@ DbConnection::DbConnection(const std::string& host,
         LOG_ERROR << "Failed to create database connection: " << e.what();
         throw DbException(e.what());
     }
+}
+
+void DbConnection::connect()
+{
+    conn_ = openConnection(host_, user_, password_, database_, 10, false);
 }
 
 DbConnection::~DbConnection() 
@@ -58,16 +87,37 @@ DbConnection::~DbConnection()
 
 bool DbConnection::ping() 
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     try 
     {
-        // 不使用 getStmt，直接创建新的语句
         std::unique_ptr<sql::Statement> stmt(conn_->createStatement());
         std::unique_ptr<sql::ResultSet> rs(stmt->executeQuery("SELECT 1"));
-        return true;
+        return rs && rs->next();
     } 
     catch (const sql::SQLException& e) 
     {
         LOG_ERROR << "Ping failed: " << e.what();
+        return false;
+    }
+}
+
+bool DbConnection::probe(const std::string& host,
+                         const std::string& user,
+                         const std::string& password,
+                         const std::string& database,
+                         unsigned int timeoutSeconds)
+{
+    try
+    {
+        std::shared_ptr<sql::Connection> connection =
+            openConnection(host, user, password, database, timeoutSeconds, true);
+        std::unique_ptr<sql::Statement> statement(connection->createStatement());
+        std::unique_ptr<sql::ResultSet> result(statement->executeQuery("SELECT 1"));
+        return result && result->next();
+    }
+    catch (const sql::SQLException& e)
+    {
+        LOG_ERROR << "Database probe failed: " << e.what();
         return false;
     }
 }
@@ -112,9 +162,7 @@ void DbConnection::reconnect()
         } 
         else 
         {
-            sql::mysql::MySQL_Driver* driver = sql::mysql::get_mysql_driver_instance();
-            conn_.reset(driver->connect(host_, user_, password_));
-            conn_->setSchema(database_);
+            connect();
         }
     } 
     catch (const sql::SQLException& e) 

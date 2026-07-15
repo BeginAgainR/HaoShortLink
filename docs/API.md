@@ -42,6 +42,18 @@ GET /api/health
 }
 ```
 
+v1.6 保留该兼容入口，并已增加：
+
+```text
+GET /api/health/live
+GET /api/health/ready
+```
+
+- liveness 只表示进程和 HTTP 事件循环能够响应，不同步探测外部依赖。
+- readiness 在 MySQL 存储模式下以 MySQL 为必要依赖，MySQL 不可用时返回 `503 Service Unavailable`。
+- Redis 查询缓存和 Redis 限流为可降级依赖，不单独将 readiness 改为失败。
+- 详细边界见 `docs/RELIABILITY_DESIGN.md`。
+
 ### 创建短链接
 
 当前状态：已实现。
@@ -96,6 +108,24 @@ V1 URL 校验规则：
 - 请求体不是合法 JSON：`400 Bad Request`。
 - 缺少 `url` 字段：`400 Bad Request`。
 - `url` 不是字符串或不符合 V1 最小 URL 规则：`400 Bad Request`。
+
+v1.6 已对该创建接口增加可配置的全局 Redis 固定窗口限流。超限时返回：
+
+```text
+429 Too Many Requests
+Retry-After: <seconds>
+```
+
+```json
+{
+  "error": {
+    "code": "rate_limit_exceeded",
+    "message": "Too many requests"
+  }
+}
+```
+
+限流默认关闭。Redis 限流故障时采用 fail-open，创建请求继续执行并记录日志和指标。
 
 ### 短码跳转
 

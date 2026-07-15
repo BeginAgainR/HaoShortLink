@@ -20,6 +20,8 @@ docs/RUNBOOK.md
 
 - 支持在 Linux VM 中手工构建和运行 `shortlink_server`。
 - 支持使用内存存储、MySQL 持久化和可选 Redis 查询缓存。
+- 支持使用 Redis 对创建短链接接口施加可选的全局固定窗口限流。
+- Compose 使用 `/api/health/ready` 作为 `shortlink_server` 就绪检查，同时保留不探测依赖的 liveness。
 - 支持使用 OrbStack Docker Compose 启动本地 MySQL、Redis、`shortlink_server`、Nginx、Prometheus 和 Grafana。
 - 本地 Compose 保留 `shortlink_server` 的 `18080` 直连调试入口。
 - `/metrics` 只通过 `shortlink_server` 内部或直连调试端口访问，Nginx 默认不转发。
@@ -58,5 +60,4 @@ v1.2 建议继续按小步推进：
 
 - 完整线上容器化部署。
 - HTTPS/TLS 终止。
-- Redis 限流。
 - 线上运行方案。

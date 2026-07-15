@@ -75,6 +75,6 @@ COPY --from=builder /opt/hao-shortlink/ /opt/hao-shortlink/
 EXPOSE 8080
 
 HEALTHCHECK --interval=5s --timeout=3s --retries=20 \
-    CMD curl -fsS http://127.0.0.1:8080/api/health >/dev/null || exit 1
+    CMD curl -fsS http://127.0.0.1:8080/api/health/ready >/dev/null || exit 1
 
 CMD ["./shortlink_server", "apps/shortlink_server/config/server.container.conf.example"]

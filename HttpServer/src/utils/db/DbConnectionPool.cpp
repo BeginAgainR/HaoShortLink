@@ -101,6 +101,51 @@ std::shared_ptr<DbConnection> DbConnectionPool::getConnection()
     }
 }
 
+bool DbConnectionPool::isHealthy(std::chrono::milliseconds acquireTimeout,
+                                 unsigned int probeTimeoutSeconds)
+{
+    std::string host;
+    std::string user;
+    std::string password;
+    std::string database;
+    {
+        std::unique_lock<std::mutex> lock(mutex_);
+        if (!initialized_)
+        {
+            return false;
+        }
+
+        if (!cv_.wait_for(lock, acquireTimeout, [this]() { return !connections_.empty(); }))
+        {
+            return false;
+        }
+
+        host = host_;
+        user = user_;
+        password = password_;
+        database = database_;
+    }
+
+    try
+    {
+        return DbConnection::probe(host,
+                                   user,
+                                   password,
+                                   database,
+                                   probeTimeoutSeconds);
+    }
+    catch (const std::exception& e)
+    {
+        LOG_ERROR << "Database readiness probe failed: " << e.what();
+    }
+    catch (...)
+    {
+        LOG_ERROR << "Database readiness probe failed: unknown error";
+    }
+
+    return false;
+}
+
 std::shared_ptr<DbConnection> DbConnectionPool::createConnection() 
 {
     return std::make_shared<DbConnection>(host_, user_, password_, database_);
@@ -118,15 +163,18 @@ void DbConnectionPool::checkConnections()
                 std::unique_lock<std::mutex> lock(mutex_);
                 if (connections_.empty()) 
                 {
+                    lock.unlock();
                     std::this_thread::sleep_for(std::chrono::seconds(1));
                     continue;
                 }
-                
-                auto temp = connections_;
-                while (!temp.empty()) 
+                else
                 {
-                    connsToCheck.push_back(temp.front());
-                    temp.pop();
+                    auto temp = connections_;
+                    while (!temp.empty())
+                    {
+                        connsToCheck.push_back(temp.front());
+                        temp.pop();
+                    }
                 }
             }
             

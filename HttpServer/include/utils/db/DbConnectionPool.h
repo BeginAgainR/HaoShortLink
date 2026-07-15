@@ -1,4 +1,5 @@
 #pragma once
+#include <chrono>
 #include <queue>
 #include <mutex>
 #include <condition_variable>
@@ -30,6 +31,10 @@ public:
 
     // 获取连接
     std::shared_ptr<DbConnection> getConnection();
+
+    // 在有界时间内获取空闲连接并执行健康探测。
+    bool isHealthy(std::chrono::milliseconds acquireTimeout,
+                   unsigned int probeTimeoutSeconds = 2);
 
 private:
     // 构造函数

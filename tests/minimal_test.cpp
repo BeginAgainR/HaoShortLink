@@ -285,6 +285,7 @@ void testShortLinkMetricsPrometheusRendering()
                         shortlink::ShortLinkMetrics::CacheResult::Miss);
     metrics.recordBackendError(shortlink::ShortLinkMetrics::Backend::Redis,
                                shortlink::ShortLinkMetrics::BackendOperation::Get);
+    metrics.recordRateLimit(shortlink::ShortLinkMetrics::RateLimitResult::Limited);
 
     const std::string rendered = metrics.renderPrometheus();
     expect(rendered.find("haohttp_shortlink_create_total{result=\"success\",storage=\"memory\"} 1") !=
@@ -299,6 +300,9 @@ void testShortLinkMetricsPrometheusRendering()
     expect(rendered.find("haohttp_shortlink_backend_errors_total{backend=\"redis\",operation=\"get\"} 1") !=
                std::string::npos,
            "short link metrics should count Redis get errors");
+    expect(rendered.find("haohttp_shortlink_rate_limit_checks_total{result=\"limited\"} 1") !=
+               std::string::npos,
+           "short link metrics should count limited creates");
 }
 
 void testShortLinkMetricsConcurrentUpdates()

@@ -41,6 +41,7 @@ tests/                      自动化测试和测试脚本
 - [数据模型](docs/DATA_MODEL.md)
 - [中间件设计](docs/MIDDLEWARE_DESIGN.md)
 - [可观测性设计](docs/OBSERVABILITY_DESIGN.md)
+- [可靠性与流量保护设计](docs/RELIABILITY_DESIGN.md)
 - [运行手册](docs/RUNBOOK.md)
 - [测试计划](docs/TEST_PLAN.md)
 - [压测计划](docs/BENCHMARK.md)

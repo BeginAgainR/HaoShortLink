@@ -75,7 +75,14 @@ public:
     int executeRawUpdate(const std::string& sql);
 
     bool ping();  // 添加检测连接是否有效的方法
+    static bool probe(const std::string& host,
+                      const std::string& user,
+                      const std::string& password,
+                      const std::string& database,
+                      unsigned int timeoutSeconds);
 private:
+    void connect();
+
      // 辅助函数：递归终止条件
     void bindParams(sql::PreparedStatement*, int) {}
     

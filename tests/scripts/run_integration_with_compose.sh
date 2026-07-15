@@ -59,5 +59,10 @@ wait_for_healthy "hao-shortlink-redis" "Redis"
 
 run_test_script "tests/scripts/mysql_redis_integration_test.sh"
 run_test_script "tests/scripts/redis_unavailable_fallback_test.sh"
+run_test_script "tests/scripts/rate_limit_test.sh"
+
+HAOHTTP_TEST_HOST="${TEST_HOST}" \
+HAOHTTP_TEST_WORKDIR="${TEST_WORKDIR}" \
+bash tests/scripts/mysql_readiness_test.sh
 
 echo "Compose-backed integration tests passed"

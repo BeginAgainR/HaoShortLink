@@ -1,7 +1,9 @@
 #include "http/HttpServer.h"
 #include "shortlink/MemoryShortLinkRepository.h"
 #include "shortlink/MySqlShortLinkRepository.h"
+#include "shortlink/RateLimiter.h"
 #include "shortlink/RedisCachedShortLinkRepository.h"
+#include "shortlink/RedisFixedWindowRateLimiter.h"
 #include "shortlink/RedisShortLinkCache.h"
 #include "shortlink/ShortLinkService.h"
 #include "shortlink/ShortLinkMetrics.h"
@@ -10,6 +12,7 @@
 #include "utils/db/DbConnectionPool.h"
 
 #include <cctype>
+#include <chrono>
 #include <iostream>
 #include <memory>
 #include <optional>
@@ -38,6 +41,10 @@ struct ServerConfig
     int redisDatabase = 0;
     int redisTtlSeconds = 3600;
     std::string redisKeyPrefix = "shortlink:";
+    bool rateLimitEnabled = false;
+    int rateLimitRequests = 100;
+    int rateLimitWindowSeconds = 60;
+    std::string rateLimitKeyPrefix = "rate-limit:create:";
 };
 
 ServerConfig loadServerConfig(const std::string& configPath)
@@ -70,6 +77,12 @@ ServerConfig loadServerConfig(const std::string& configPath)
         serverConfig.redisDatabase = config.getInt("redis.database", serverConfig.redisDatabase);
         serverConfig.redisTtlSeconds = config.getInt("redis.ttl_seconds", serverConfig.redisTtlSeconds);
         serverConfig.redisKeyPrefix = config.getString("redis.key_prefix", serverConfig.redisKeyPrefix);
+        serverConfig.rateLimitEnabled = config.getBool("rate_limit.enabled", serverConfig.rateLimitEnabled);
+        serverConfig.rateLimitRequests = config.getInt("rate_limit.requests", serverConfig.rateLimitRequests);
+        serverConfig.rateLimitWindowSeconds =
+            config.getInt("rate_limit.window_seconds", serverConfig.rateLimitWindowSeconds);
+        serverConfig.rateLimitKeyPrefix =
+            config.getString("rate_limit.key_prefix", serverConfig.rateLimitKeyPrefix);
     }
 
     if (serverConfig.port <= 0 || serverConfig.port > 65535)
@@ -112,6 +125,32 @@ ServerConfig loadServerConfig(const std::string& configPath)
     {
         std::cerr << "Invalid redis.ttl_seconds. Using default ttl_seconds 3600." << std::endl;
         serverConfig.redisTtlSeconds = 3600;
+    }
+
+    if (serverConfig.rateLimitRequests <= 0)
+    {
+        std::cerr << "Invalid rate_limit.requests. Disabling rate limiting." << std::endl;
+        serverConfig.rateLimitEnabled = false;
+    }
+
+    if (serverConfig.rateLimitWindowSeconds <= 0)
+    {
+        std::cerr << "Invalid rate_limit.window_seconds. Disabling rate limiting." << std::endl;
+        serverConfig.rateLimitEnabled = false;
+    }
+
+    if (serverConfig.rateLimitKeyPrefix.empty())
+    {
+        std::cerr << "Invalid rate_limit.key_prefix. Disabling rate limiting." << std::endl;
+        serverConfig.rateLimitEnabled = false;
+    }
+
+    if (serverConfig.rateLimitEnabled &&
+        serverConfig.rateLimitKeyPrefix == serverConfig.redisKeyPrefix)
+    {
+        std::cerr << "rate_limit.key_prefix must differ from redis.key_prefix. "
+                  << "Disabling rate limiting." << std::endl;
+        serverConfig.rateLimitEnabled = false;
     }
 
     return serverConfig;
@@ -278,12 +317,62 @@ void handleHealth(const http::HttpRequest& req, http::HttpResponse* resp)
     resp->setJsonBody("{\"status\":\"ok\"}");
 }
 
+void handleReadiness(const http::HttpRequest& req,
+                     http::HttpResponse* resp,
+                     bool requiresMySql)
+{
+    (void)req;
+    const bool ready = !requiresMySql ||
+                       http::db::DbConnectionPool::getInstance().isHealthy(
+                           std::chrono::milliseconds(100));
+    if (ready)
+    {
+        resp->setStatusCode(http::HttpResponse::k200Ok);
+        resp->setStatusMessage("OK");
+        resp->setJsonBody("{\"status\":\"ready\"}");
+        return;
+    }
+
+    resp->setStatusCode(http::HttpResponse::k503ServiceUnavailable);
+    resp->setStatusMessage("Service Unavailable");
+    resp->setJsonBody("{\"status\":\"not_ready\"}");
+}
+
 void handleCreateShortLink(const http::HttpRequest& req,
                            http::HttpResponse* resp,
                            shortlink::ShortLinkService* service,
                            shortlink::ShortLinkMetrics* metrics,
-                           shortlink::ShortLinkMetrics::Storage storage)
+                           shortlink::ShortLinkMetrics::Storage storage,
+                           const shortlink::RateLimiter* rateLimiter)
 {
+    if (rateLimiter != nullptr)
+    {
+        const shortlink::RateLimiter::Result result = rateLimiter->check("global");
+        if (result.status == shortlink::RateLimiter::Status::Allowed)
+        {
+            metrics->recordRateLimit(shortlink::ShortLinkMetrics::RateLimitResult::Allowed);
+        }
+        else if (result.status == shortlink::RateLimiter::Status::Limited)
+        {
+            metrics->recordRateLimit(shortlink::ShortLinkMetrics::RateLimitResult::Limited);
+            LOG_WARN << "rate_limit result=limited request_id=" << req.requestId()
+                     << " retry_after_seconds=" << result.retryAfterSeconds;
+            resp->addHeader("Retry-After", std::to_string(result.retryAfterSeconds));
+            resp->setErrorResponse(http::HttpResponse::k429TooManyRequests,
+                                   "rate_limit_exceeded",
+                                   "Too many requests");
+            resp->setStatusMessage("Too Many Requests");
+            return;
+        }
+        else
+        {
+            metrics->recordRateLimit(shortlink::ShortLinkMetrics::RateLimitResult::Error);
+            metrics->recordBackendError(shortlink::ShortLinkMetrics::Backend::Redis,
+                                        shortlink::ShortLinkMetrics::BackendOperation::RateLimit);
+            LOG_ERROR << "rate_limit result=error fail_open=true request_id=" << req.requestId();
+        }
+    }
+
     if (!hasJsonContentType(req))
     {
         metrics->recordCreate(shortlink::ShortLinkMetrics::CreateResult::Invalid, storage);
@@ -384,6 +473,7 @@ int main(int argc, char* argv[])
             : shortlink::ShortLinkMetrics::Storage::Memory;
     std::unique_ptr<shortlink::ShortLinkRepository> primaryShortLinkRepository;
     std::unique_ptr<shortlink::ShortLinkRepository> shortLinkRepository;
+    std::unique_ptr<shortlink::RateLimiter> rateLimiter;
     if (config.storageType == "mysql")
     {
         http::db::DbConnectionPool::getInstance().init(config.mysqlHost,
@@ -421,18 +511,40 @@ int main(int argc, char* argv[])
             std::make_unique<shortlink::MemoryShortLinkRepository>(&shortLinkMetrics);
     }
 
+    if (config.rateLimitEnabled)
+    {
+        shortlink::RedisFixedWindowRateLimiter::Config rateLimitConfig;
+        rateLimitConfig.host = config.redisHost;
+        rateLimitConfig.port = config.redisPort;
+        rateLimitConfig.database = config.redisDatabase;
+        rateLimitConfig.requests = config.rateLimitRequests;
+        rateLimitConfig.windowSeconds = config.rateLimitWindowSeconds;
+        rateLimitConfig.keyPrefix = config.rateLimitKeyPrefix;
+        rateLimiter = std::make_unique<shortlink::RedisFixedWindowRateLimiter>(
+            std::move(rateLimitConfig));
+    }
+
     shortlink::ShortLinkService shortLinkService(*shortLinkRepository);
 
     server.setThreadNum(config.threadNum);
     server.Get("/api/health", handleHealth);
+    server.Get("/api/health/live", handleHealth);
+    server.Get("/api/health/ready", [requiresMySql = config.storageType == "mysql"](
+                                        const http::HttpRequest& req,
+                                        http::HttpResponse* resp) {
+        handleReadiness(req, resp, requiresMySql);
+    });
     server.Post("/api/short-links", [&shortLinkService,
                                      &shortLinkMetrics,
-                                     metricsStorage](const http::HttpRequest& req, http::HttpResponse* resp) {
+                                     metricsStorage,
+                                     limiter = rateLimiter.get()](const http::HttpRequest& req,
+                                                                  http::HttpResponse* resp) {
         handleCreateShortLink(req,
                               resp,
                               &shortLinkService,
                               &shortLinkMetrics,
-                              metricsStorage);
+                              metricsStorage,
+                              limiter);
     });
     server.addRoute(http::HttpRequest::kGet,
                     "/s/:code",
