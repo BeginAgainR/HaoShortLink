@@ -1,6 +1,6 @@
 # 测试计划
 
-状态：持续维护；当前基线为 v1.6.5 本地端到端验证通过，云端 CI 待分支推送后确认
+状态：持续维护；当前基线为 v1.6.6 本地端到端与干净克隆验证通过，云端 CI 待分支推送后确认
 当前实现：已建立框架与业务基础测试、API 冒烟、MySQL / Redis 集成、Redis 不可用回退、异常场景、限流、健康语义、Compose 编排和监控冒烟入口；CI workflow 已配置覆盖构建、CTest、API smoke、脚本语法、依赖集成、限流以及 Prometheus / Grafana 端到端验证。
 
 ## v1.3 执行顺序
@@ -76,6 +76,15 @@ v1.3 的目标是把当前手工验证沉淀为可重复执行的测试体系，
 - 失败时输出 MySQL / Redis 容器日志，结束时清理容器和临时数据卷。
 - 监控冒烟使用独立 job，固定 Prometheus / Grafana 镜像版本；失败时输出监控链路日志，结束时清理四个 named volume。
 - 当前不把环境敏感的性能基线作为 PR 硬门禁。
+
+v1.6.6 干净克隆验证：
+
+- 分支提交：`ced354a`。
+- Linux VM 源码目录：`/tmp/haoHTTP-v1.6-clean-ced354a`。
+- Linux VM 构建目录：`/tmp/haoHTTP-v1.6-build-ced354a`。
+- Docker 宿主侧源码目录：`/tmp/haoHTTP-v1.6-host-ced354a`。
+- Release 构建、CTest、API smoke、MySQL / Redis 集成、Redis fallback、限流、MySQL 故障 readiness 恢复全部通过。
+- 干净克隆 Docker 镜像构建、Nginx、Prometheus / Grafana 监控冒烟和 Nginx 限流冒烟全部通过。
 
 最近一次增强 CI 验证：
 
