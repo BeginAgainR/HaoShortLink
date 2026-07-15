@@ -27,7 +27,7 @@
 - OrbStack Linux VM：`haoHTTP`
 - 进入方式：`ssh haoHTTP@orb`
 - 项目路径：`/Users/hao/Code/haoHTTP`
-- 当前分支：`codex/v1.6-reliability`
+- 稳定分支：`main`；版本开发从 `main` 创建独立分支。
 
 当前 VM 已安装：
 

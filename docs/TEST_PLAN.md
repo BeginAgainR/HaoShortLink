@@ -1,6 +1,6 @@
 # 测试计划
 
-状态：持续维护；当前基线为 v1.6.6 本地端到端与干净克隆验证通过，云端 CI 待分支推送后确认
+状态：持续维护；当前基线为 v1.6.6 本地端到端、干净克隆和 GitHub Actions 云端 CI 验证通过
 当前实现：已建立框架与业务基础测试、API 冒烟、MySQL / Redis 集成、Redis 不可用回退、异常场景、限流、健康语义、Compose 编排和监控冒烟入口；CI workflow 已配置覆盖构建、CTest、API smoke、脚本语法、依赖集成、限流以及 Prometheus / Grafana 端到端验证。
 
 ## v1.3 执行顺序
@@ -85,6 +85,12 @@ v1.6.6 干净克隆验证：
 - Docker 宿主侧源码目录：`/tmp/haoHTTP-v1.6-host-ced354a`。
 - Release 构建、CTest、API smoke、MySQL / Redis 集成、Redis fallback、限流、MySQL 故障 readiness 恢复全部通过。
 - 干净克隆 Docker 镜像构建、Nginx、Prometheus / Grafana 监控冒烟和 Nginx 限流冒烟全部通过。
+
+v1.6 云端 CI 验证：
+
+- 功能与维护提交：`0f01f0f`。
+- 首轮 CI 发现 `mysql_readiness_test.sh` 在 GitHub runner 本地执行模式下的后台启动命令会等待外层任务；已修正命令分组、关闭后台进程 stdin，并为 Linux job 增加 30 分钟超时。
+- 修复后 push run `29428091554` 与 pull request run `29428094256` 的 `Linux build and tests`、`Prometheus and Grafana smoke` 均通过。
 
 最近一次增强 CI 验证：
 
