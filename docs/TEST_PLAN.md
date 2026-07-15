@@ -1,7 +1,7 @@
 # 测试计划
 
-状态：持续维护；当前基线为 v1.5.4 自动化、性能回归和文档收口通过
-当前实现：已建立框架与业务基础测试、API 冒烟、MySQL / Redis 集成、Redis 不可用回退、异常场景、Compose 编排和监控冒烟入口；CI 已覆盖构建、CTest、API smoke、脚本语法、依赖集成以及 Prometheus / Grafana 端到端验证。
+状态：持续维护；当前基线为 v1.6.6 本地端到端、干净克隆和 GitHub Actions 云端 CI 验证通过
+当前实现：已建立框架与业务基础测试、API 冒烟、MySQL / Redis 集成、Redis 不可用回退、异常场景、限流、健康语义、Compose 编排和监控冒烟入口；CI workflow 已配置覆盖构建、CTest、API smoke、脚本语法、依赖集成、限流以及 Prometheus / Grafana 端到端验证。
 
 ## v1.3 执行顺序
 
@@ -47,7 +47,7 @@ v1.3 的目标是把当前手工验证沉淀为可重复执行的测试体系，
 
 触发范围：
 
-- 推送到主线分支、`refactor/**` 或 `feature/**` 开发分支时执行。
+- 推送到主线分支、`refactor/**`、`feature/**` 或 `codex/**` 开发分支时执行。
 - 发起 pull request 时执行。
 
 当前覆盖：
@@ -59,13 +59,16 @@ v1.3 的目标是把当前手工验证沉淀为可重复执行的测试体系，
 - 执行 API 冒烟测试，使用内存存储模式验证健康检查、创建短链、短码跳转、基础错误响应和可配置 `/metrics`。
 - 检查 `tests/scripts/*.sh` 的 Bash 语法。
 - 通过 Docker Compose 启动 MySQL、Redis，执行持久化、缓存回填和 Redis 不可用 fallback 测试。
+- 执行 Redis Lua 固定窗口、并发原子性、fail-open、MySQL 存储与查询缓存开关独立性测试。
+- 在运行中停止和恢复 MySQL，验证 liveness / readiness 故障与恢复语义。
 - 通过独立并行 job 启动完整 Compose，验证 Nginx、Prometheus scrape / 查询、Grafana datasource / dashboard、`/metrics` 暴露边界以及 Prometheus / Grafana 容器重建后的数据恢复。
+- 在监控 job 内经 Nginx 验证 `429`、`Retry-After`、健康入口和限流指标。
 - muduo 构建命令兼容新版 CMake 对旧项目最低版本策略的检查。
 
 当前 CI 暂不覆盖：
 
-- 压测和限流。
-- 生产告警、长期容量规划和 liveness / readiness 拆分。
+- 环境敏感的性能压测。
+- 生产告警和长期容量规划。
 
 依赖集成 CI 边界：
 
@@ -73,6 +76,21 @@ v1.3 的目标是把当前手工验证沉淀为可重复执行的测试体系，
 - 失败时输出 MySQL / Redis 容器日志，结束时清理容器和临时数据卷。
 - 监控冒烟使用独立 job，固定 Prometheus / Grafana 镜像版本；失败时输出监控链路日志，结束时清理四个 named volume。
 - 当前不把环境敏感的性能基线作为 PR 硬门禁。
+
+v1.6.6 干净克隆验证：
+
+- 分支提交：`ced354a`。
+- Linux VM 源码目录：`/tmp/haoHTTP-v1.6-clean-ced354a`。
+- Linux VM 构建目录：`/tmp/haoHTTP-v1.6-build-ced354a`。
+- Docker 宿主侧源码目录：`/tmp/haoHTTP-v1.6-host-ced354a`。
+- Release 构建、CTest、API smoke、MySQL / Redis 集成、Redis fallback、限流、MySQL 故障 readiness 恢复全部通过。
+- 干净克隆 Docker 镜像构建、Nginx、Prometheus / Grafana 监控冒烟和 Nginx 限流冒烟全部通过。
+
+v1.6 云端 CI 验证：
+
+- 功能与维护提交：`0f01f0f`。
+- 首轮 CI 发现 `mysql_readiness_test.sh` 在 GitHub runner 本地执行模式下的后台启动命令会等待外层任务；已修正命令分组、关闭后台进程 stdin，并为 Linux job 增加 30 分钟超时。
+- 修复后 push run `29428091554` 与 pull request run `29428094256` 的 `Linux build and tests`、`Prometheus and Grafana smoke` 均通过。
 
 最近一次增强 CI 验证：
 
@@ -92,6 +110,7 @@ ctest --test-dir /tmp/haoHTTP-build --output-on-failure
 bash tests/scripts/api_smoke_test.sh
 HAOHTTP_TEST_HOST=haoHTTP@orb bash tests/scripts/run_integration_with_compose.sh
 bash tests/scripts/monitoring_smoke_test.sh
+bash tests/scripts/rate_limit_nginx_test.sh
 ```
 
 ## 测试分层

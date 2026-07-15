@@ -275,6 +275,28 @@ shortlink_server -> access-events topic -> stats consumer
 - RabbitMQ 仍作为后续任务队列、复杂路由或可靠任务分发场景的候选，但不作为第一批消息队列目标。
 - 消息队列接入不能改变短码跳转主路径语义；Kafka 不可用时需要明确降级策略。
 
+### v1.6 限流与健康语义
+
+状态：已确认
+
+决策：
+
+- 第一版限流只保护 `POST /api/short-links`，不限制短码跳转、健康检查或指标入口。
+- 使用 Redis Lua 固定窗口和跨实例共享的全局创建额度。
+- 超限返回 `429 Too Many Requests`、统一 JSON 错误和 `Retry-After`。
+- Redis 限流故障采用 fail-open；Redis 不是业务事实存储，故障必须可观察但不应将所有创建请求拒绝为不可用。
+- 不在缺少可信代理和客户端身份边界时直接信任 `X-Forwarded-For` 或 `X-Real-IP`，因此 v1.6 不实现按 IP 限流。
+- `/api/health` 保留兼容并表示 liveness；新增独立 liveness / readiness 入口。
+- MySQL 是 MySQL 存储模式的 readiness 必要依赖；Redis 查询缓存和限流均为可降级依赖。
+
+理由：
+
+- 全局额度能在不扩张客户端身份范围的前提下保护当前写入路径。
+- 固定窗口有边界突刺权衡，但能以小而可验证的 Lua 原子逻辑满足当前阶段。
+- 区分 liveness 和 readiness 可避免依赖故障导致无效的进程重启，同时让流量入口停止向不可用的 MySQL 实例送流量。
+
+详细设计：`docs/RELIABILITY_DESIGN.md`。
+
 ## 待决策
 
 ### API 版本
@@ -289,7 +311,6 @@ shortlink_server -> access-events topic -> stats consumer
 
 - 用户系统。
 - 访问统计。
-- Redis 限流。
 - 完整线上部署。
 - HTTPS/TLS 终止。
 - 发布回滚。

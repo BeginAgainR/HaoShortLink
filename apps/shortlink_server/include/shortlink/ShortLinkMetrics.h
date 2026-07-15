@@ -72,6 +72,15 @@ public:
         Find,
         Get,
         Set,
+        RateLimit,
+        Count
+    };
+
+    enum class RateLimitResult : std::size_t
+    {
+        Allowed,
+        Limited,
+        Error,
         Count
     };
 
@@ -81,6 +90,7 @@ public:
     void recordRedirect(RedirectResult result, RedirectSource source) noexcept;
     void recordCache(CacheOperation operation, CacheResult result) noexcept;
     void recordBackendError(Backend backend, BackendOperation operation) noexcept;
+    void recordRateLimit(RateLimitResult result) noexcept;
     std::string renderPrometheus() const;
 
 private:
@@ -92,16 +102,19 @@ private:
     static constexpr std::size_t kCacheResultCount = static_cast<std::size_t>(CacheResult::Count);
     static constexpr std::size_t kBackendCount = static_cast<std::size_t>(Backend::Count);
     static constexpr std::size_t kBackendOperationCount = static_cast<std::size_t>(BackendOperation::Count);
+    static constexpr std::size_t kRateLimitResultCount = static_cast<std::size_t>(RateLimitResult::Count);
 
     using CreateCounters = std::array<std::atomic<std::uint64_t>, kStorageCount * kCreateResultCount>;
     using RedirectCounters = std::array<std::atomic<std::uint64_t>, kRedirectSourceCount * kRedirectResultCount>;
     using CacheCounters = std::array<std::atomic<std::uint64_t>, kCacheOperationCount * kCacheResultCount>;
     using BackendErrorCounters = std::array<std::atomic<std::uint64_t>, kBackendCount * kBackendOperationCount>;
+    using RateLimitCounters = std::array<std::atomic<std::uint64_t>, kRateLimitResultCount>;
 
     CreateCounters createCounters_;
     RedirectCounters redirectCounters_;
     CacheCounters cacheCounters_;
     BackendErrorCounters backendErrorCounters_;
+    RateLimitCounters rateLimitCounters_;
 };
 
 } // namespace shortlink

@@ -24,3 +24,10 @@ redis.port=6379
 redis.database=0
 redis.ttl_seconds=3600
 redis.key_prefix=shortlink:
+
+# Redis-backed global fixed-window limit for POST /api/short-links.
+# This switch is independent of redis.enabled query caching.
+rate_limit.enabled=false
+rate_limit.requests=100
+rate_limit.window_seconds=60
+rate_limit.key_prefix=rate-limit:create:

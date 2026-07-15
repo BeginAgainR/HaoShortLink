@@ -1,7 +1,7 @@
 # 项目概览
 
 状态：已建立基础版，持续维护
-当前实现：已实现健康检查、创建短链接、短码跳转、MySQL 持久化、可选 Redis 查询缓存和本地 Docker Compose 运行方式；v1.3 已完成第一版自动化测试和 CI，v1.4 已完成性能与稳定性基线，v1.5 已完成可观测性收口
+当前实现：已实现健康检查、创建短链接、短码跳转、MySQL 持久化、可选 Redis 查询缓存和本地 Docker Compose 运行方式；v1.3 已完成第一版自动化测试和 CI，v1.4 已完成性能与稳定性基线，v1.5 已完成可观测性，v1.6 已完成限流、健康语义和云端 CI 收口
 
 ## 项目定位
 
@@ -22,9 +22,10 @@ HaoShortLink 是一个基于 muduo 网络库的 C++17 HTTP 框架项目。当前
 - CI 第一版核心命令链路已在 Linux VM 中验证，GitHub Actions 云端 CI 已通过。
 - v1.4 已完成 curl / `hey` 多模式基线、关键异常场景、Redis 环境问题定性和 Nginx 入口底线验证。
 - v1.5 已完成 request ID、结构化请求日志、HTTP / 短链指标、Prometheus、Grafana、六面板 dashboard 和监控链路 CI 冒烟验证。
+- v1.6 已实现可配置的 Redis Lua 全局创建限流、fail-open、liveness / readiness 和保护性测试；GitHub Actions 云端 CI 已通过。
 - 完整部署方案尚未实现。
 - 已完成请求日志、统一 JSON 错误响应、JSON 响应辅助和配置加载等框架基础能力。
-- MySQL / Redis 依赖集成和监控冒烟已进入 CI；下一阶段重点是 v1.6 可靠性与流量保护。
+- MySQL / Redis 依赖集成、监控冒烟、限流和健康语义测试已配置进入 CI。
 
 ## 目录结构
 
@@ -53,7 +54,6 @@ tests/                      自动化测试和测试脚本
 
 以下能力尚未实现，不应在公开文档中描述为已完成：
 
-- Redis 限流
 - 生产告警和长期容量规划
 - 消息队列
 - 访问统计

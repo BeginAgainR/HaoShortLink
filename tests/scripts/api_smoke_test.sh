@@ -121,6 +121,18 @@ expect_contains "${body}" '"status":"ok"' "health body"
 expect_contains "${headers}" "X-Request-ID: ${client_request_id}" "health request ID response header"
 echo "PASS: GET /api/health"
 
+status="$(curl -sS -o "${body_file}" -w "%{http_code}" "${BASE_URL}/api/health/live")"
+body="$(cat "${body_file}")"
+expect_eq "${status}" "200" "liveness status"
+expect_contains "${body}" '"status":"ok"' "liveness body"
+echo "PASS: GET /api/health/live"
+
+status="$(curl -sS -o "${body_file}" -w "%{http_code}" "${BASE_URL}/api/health/ready")"
+body="$(cat "${body_file}")"
+expect_eq "${status}" "200" "readiness status"
+expect_contains "${body}" '"status":"ready"' "readiness body"
+echo "PASS: GET /api/health/ready"
+
 original_url="https://example.com/api-smoke"
 status="$(curl -sS -o "${body_file}" -w "%{http_code}" \
     -X POST "${BASE_URL}/api/short-links" \

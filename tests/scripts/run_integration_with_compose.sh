@@ -7,6 +7,8 @@ MYSQL_IMAGE="${SHORTLINK_MYSQL_IMAGE:-docker.m.daocloud.io/library/mysql:8.0}"
 REDIS_IMAGE="${SHORTLINK_REDIS_IMAGE:-docker.m.daocloud.io/library/redis:7-alpine}"
 TEST_HOST="${HAOHTTP_TEST_HOST:-}"
 TEST_WORKDIR="${HAOHTTP_TEST_WORKDIR:-${ROOT_DIR}}"
+TEST_BUILD_DIR="${HAOHTTP_BUILD_DIR:-/tmp/haoHTTP-build}"
+TEST_SERVER_BIN="${HAOHTTP_SERVER_BIN:-${TEST_BUILD_DIR}/shortlink_server}"
 
 fail()
 {
@@ -39,7 +41,8 @@ run_test_script()
     local script_path="$1"
 
     if [[ -n "${TEST_HOST}" ]]; then
-        ssh "${TEST_HOST}" "cd '${TEST_WORKDIR}' && bash '${script_path}'"
+        ssh "${TEST_HOST}" \
+            "cd '${TEST_WORKDIR}' && HAOHTTP_BUILD_DIR='${TEST_BUILD_DIR}' HAOHTTP_SERVER_BIN='${TEST_SERVER_BIN}' bash '${script_path}'"
     else
         bash "${script_path}"
     fi
@@ -59,5 +62,12 @@ wait_for_healthy "hao-shortlink-redis" "Redis"
 
 run_test_script "tests/scripts/mysql_redis_integration_test.sh"
 run_test_script "tests/scripts/redis_unavailable_fallback_test.sh"
+run_test_script "tests/scripts/rate_limit_test.sh"
+
+HAOHTTP_TEST_HOST="${TEST_HOST}" \
+HAOHTTP_TEST_WORKDIR="${TEST_WORKDIR}" \
+HAOHTTP_BUILD_DIR="${TEST_BUILD_DIR}" \
+HAOHTTP_SERVER_BIN="${TEST_SERVER_BIN}" \
+bash tests/scripts/mysql_readiness_test.sh
 
 echo "Compose-backed integration tests passed"

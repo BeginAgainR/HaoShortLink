@@ -27,7 +27,7 @@
 - OrbStack Linux VM：`haoHTTP`
 - 进入方式：`ssh haoHTTP@orb`
 - 项目路径：`/Users/hao/Code/haoHTTP`
-- 当前分支：`refactor/v1.5-observability`
+- 稳定分支：`main`；版本开发从 `main` 创建独立分支。
 
 当前 VM 已安装：
 
@@ -117,6 +117,7 @@ log.level=INFO
 metrics.enabled=true
 storage.type=memory
 redis.enabled=false
+rate_limit.enabled=false
 ```
 
 说明：
@@ -129,6 +130,21 @@ redis.enabled=false
 - `mysql` 需要先创建 `short_links` 表并配置 MySQL 连接信息。
 - `redis.enabled` 是 MySQL 存储模式下的可选查询缓存开关，默认关闭。
 - `metrics.enabled` 控制直连服务的 `GET /metrics` 路由，默认启用。
+- `rate_limit.enabled` 控制 `POST /api/short-links` 的全局 Redis 固定窗口限流，默认关闭。
+- `rate_limit.requests`、`rate_limit.window_seconds` 分别配置窗口额度和秒数。
+- `rate_limit.key_prefix` 必须和 `redis.key_prefix` 不同。
+- 限流与查询缓存开关独立，Redis 限流不可用时采用 fail-open。
+
+健康检查：
+
+```text
+GET /api/health        兼容 liveness
+GET /api/health/live   进程存活，不探测外部依赖
+GET /api/health/ready  业务就绪，MySQL 模式下探测 MySQL
+```
+
+MySQL 存储模式下，MySQL 不可用时 readiness 返回 `503`，liveness 仍返回 `200`。
+Redis 查询缓存或 Redis 限流故障不单独改变 readiness。
 
 建议：
 

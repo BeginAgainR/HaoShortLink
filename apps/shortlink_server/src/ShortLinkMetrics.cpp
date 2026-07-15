@@ -14,7 +14,8 @@ const std::array<const char*, 3> kRedirectResultLabels { "success", "not_found",
 const std::array<const char*, 2> kCacheOperationLabels { "get", "set" };
 const std::array<const char*, 4> kCacheResultLabels { "hit", "miss", "success", "error" };
 const std::array<const char*, 2> kBackendLabels { "mysql", "redis" };
-const std::array<const char*, 4> kBackendOperationLabels { "create", "find", "get", "set" };
+const std::array<const char*, 5> kBackendOperationLabels { "create", "find", "get", "set", "rate_limit" };
+const std::array<const char*, 3> kRateLimitResultLabels { "allowed", "limited", "error" };
 
 template <typename Counters>
 void resetCounters(Counters* counters)
@@ -33,6 +34,7 @@ ShortLinkMetrics::ShortLinkMetrics()
     resetCounters(&redirectCounters_);
     resetCounters(&cacheCounters_);
     resetCounters(&backendErrorCounters_);
+    resetCounters(&rateLimitCounters_);
 }
 
 void ShortLinkMetrics::recordCreate(CreateResult result, Storage storage) noexcept
@@ -61,6 +63,11 @@ void ShortLinkMetrics::recordBackendError(Backend backend, BackendOperation oper
     const std::size_t index = static_cast<std::size_t>(backend) * kBackendOperationCount +
                               static_cast<std::size_t>(operation);
     backendErrorCounters_[index].fetch_add(1, std::memory_order_relaxed);
+}
+
+void ShortLinkMetrics::recordRateLimit(RateLimitResult result) noexcept
+{
+    rateLimitCounters_[static_cast<std::size_t>(result)].fetch_add(1, std::memory_order_relaxed);
 }
 
 std::string ShortLinkMetrics::renderPrometheus() const
@@ -138,6 +145,15 @@ std::string ShortLinkMetrics::renderPrometheus() const
                    << "\",operation=\"" << kBackendOperationLabels[operation] << "\"} "
                    << backendErrorCounters_[index].load(std::memory_order_relaxed) << '\n';
         }
+    }
+
+    output << "# HELP haohttp_shortlink_rate_limit_checks_total Short link create rate limit check results.\n"
+           << "# TYPE haohttp_shortlink_rate_limit_checks_total counter\n";
+    for (std::size_t result = 0; result < kRateLimitResultLabels.size(); ++result)
+    {
+        output << "haohttp_shortlink_rate_limit_checks_total{result=\""
+               << kRateLimitResultLabels[result] << "\"} "
+               << rateLimitCounters_[result].load(std::memory_order_relaxed) << '\n';
     }
 
     return output.str();

@@ -7,6 +7,7 @@ on:
       - master
       - "refactor/**"
       - "feature/**"
+      - "codex/**"
   pull_request:
 
 permissions:
@@ -16,6 +17,7 @@ jobs:
   build-and-test:
     name: Linux build and tests
     runs-on: ubuntu-22.04
+    timeout-minutes: 30
 
     env:
       BUILD_DIR: /tmp/haoHTTP-build
@@ -104,6 +106,9 @@ jobs:
           SHORTLINK_PROMETHEUS_IMAGE: prom/prometheus:v3.13.0
           SHORTLINK_GRAFANA_IMAGE: grafana/grafana:12.4.3-security-02
         run: bash tests/scripts/monitoring_smoke_test.sh
+
+      - name: Run Nginx rate limit smoke test
+        run: bash tests/scripts/rate_limit_nginx_test.sh
 
       - name: Show monitoring logs on failure
         if: failure()
