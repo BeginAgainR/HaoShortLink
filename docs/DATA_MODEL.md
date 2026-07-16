@@ -1,7 +1,7 @@
 # 数据模型
 
 状态：已建立基础版，持续维护
-当前实现：已实现 `code -> original_url` 映射、MySQL 持久化和可选 Redis 查询缓存
+当前实现：已实现短链生命周期记录、MySQL 持久化和可选 Redis 生命周期查询缓存
 
 ## 说明
 
@@ -23,8 +23,8 @@
 - `original_url`：原始 URL。
 - `created_at`：创建时间。
 - `updated_at`：更新时间。
-- `expires_at`：过期时间，后置能力。
-- `status`：状态，后置能力。
+- `expires_at`：UTC 过期时间，可空；v1.7 已实现。
+- `status`：`active` 或 `disabled`；v1.7 已实现。
 
 v1.1 计划先只持久化短链映射本身，不引入用户归属、访问统计、过期策略或软删除状态。
 
@@ -86,6 +86,18 @@ MySQL AUTO_INCREMENT id -> Base62(code)
 
 创建短链时先让 MySQL 生成自增 id，再将 id 转换为 Base62 短码并在同一事务中写回
 `code` 字段。这样服务重启后不会因为进程内计数器重置而重复生成已有短码。
+
+## v1.7 生命周期迁移
+
+v1.7 通过独立迁移为现有表增加：
+
+```sql
+status VARCHAR(16) NOT NULL DEFAULT 'active'
+expires_at DATETIME NULL
+```
+
+已有记录自动保持 `active` 且 `expires_at IS NULL`，即迁移不会改变已有短链的跳转结果。
+`expires_at` 按 UTC 解释；过期由读取时比较当前时间计算，不持久化 `expired` 状态。
 
 ### Redis 缓存
 

@@ -23,8 +23,9 @@ docs/RUNBOOK.md
 - 支持使用 Redis 对创建短链接接口施加可选的全局固定窗口限流。
 - Compose 使用 `/api/health/ready` 作为 `shortlink_server` 就绪检查，同时保留不探测依赖的 liveness。
 - 支持使用 OrbStack Docker Compose 启动本地 MySQL、Redis、`shortlink_server`、Nginx、Prometheus 和 Grafana。
-- 本地 Compose 保留 `shortlink_server` 的 `18080` 直连调试入口。
+- 本地 Compose 保留只绑定 `127.0.0.1` 的 `shortlink_server:18080` 直连调试入口。
 - `/metrics` 只通过 `shortlink_server` 内部或直连调试端口访问，Nginx 默认不转发。
+- `/internal/` 生命周期管理接口只允许通过本机直连入口访问，Nginx 显式返回 `404`。
 - Prometheus 和 Grafana 分别通过 `127.0.0.1:9090`、`127.0.0.1:3000` 提供本地调试入口，不绑定全部宿主机网卡。
 - Prometheus 和 Grafana 使用 named volume；dashboard 和数据源通过仓库内 provisioning 文件自动加载。
 - 生产化部署应只对外暴露 Nginx 的 80/443 入口，后端服务和数据库缓存只在内部网络可见。

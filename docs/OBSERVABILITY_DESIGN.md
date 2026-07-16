@@ -50,7 +50,7 @@ v1.5 不处理：
 - 创建成功、校验失败或存储失败
 - 跳转成功、短码不存在、禁用或过期等业务结果
 - 查询来源为 memory、MySQL 或 Redis
-- Redis get / set 的 hit、miss、success 或 error
+- Redis get / set / delete 的 hit、miss、success 或 error
 - MySQL / Redis 操作错误
 
 ## Request ID
@@ -160,6 +160,7 @@ haohttp_shortlink_backend_errors_total{backend,operation}
 其中：
 
 - `method`、`route`、`status_class`、`result`、`storage`、`source`、`operation` 和 `backend` 必须来自有限集合。
+- MySQL 后端 operation 区分 `create`、`find`、`list`、`update`；Redis 区分 `get`、`set`、`delete` 和 `rate_limit`。
 - `route` 使用路由模板，不使用 `/s/000001` 等实际路径。
 - `status_class` 优先使用 `2xx`、`3xx`、`4xx`、`5xx`，避免无意义扩张。
 - 不允许使用 request ID、短码、原始 URL、IP、User-Agent 或错误消息作为 label。
