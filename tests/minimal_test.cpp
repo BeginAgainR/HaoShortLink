@@ -285,6 +285,8 @@ void testShortLinkMetricsPrometheusRendering()
                         shortlink::ShortLinkMetrics::CacheResult::Miss);
     metrics.recordBackendError(shortlink::ShortLinkMetrics::Backend::Redis,
                                shortlink::ShortLinkMetrics::BackendOperation::Get);
+    metrics.recordBackendError(shortlink::ShortLinkMetrics::Backend::Mysql,
+                               shortlink::ShortLinkMetrics::BackendOperation::Update);
     metrics.recordRateLimit(shortlink::ShortLinkMetrics::RateLimitResult::Limited);
 
     const std::string rendered = metrics.renderPrometheus();
@@ -300,6 +302,9 @@ void testShortLinkMetricsPrometheusRendering()
     expect(rendered.find("haohttp_shortlink_backend_errors_total{backend=\"redis\",operation=\"get\"} 1") !=
                std::string::npos,
            "short link metrics should count Redis get errors");
+    expect(rendered.find("haohttp_shortlink_backend_errors_total{backend=\"mysql\",operation=\"update\"} 1") !=
+               std::string::npos,
+           "short link metrics should distinguish MySQL lifecycle update errors");
     expect(rendered.find("haohttp_shortlink_rate_limit_checks_total{result=\"limited\"} 1") !=
                std::string::npos,
            "short link metrics should count limited creates");
@@ -413,26 +418,84 @@ void testMiddlewareOrder()
 class CountingRepository : public shortlink::ShortLinkRepository
 {
 public:
-    std::optional<ShortLinkRecord> create(const std::string& originalUrl) override
+    std::optional<ShortLinkRecord> create(
+        const std::string& originalUrl,
+        std::optional<std::int64_t> expiresAt = std::nullopt) override
     {
         ++createCalls;
         return ShortLinkRecord {
+            1,
             "custom01",
-            originalUrl
+            originalUrl,
+            Status::Active,
+            expiresAt,
+            1,
+            1
         };
     }
 
-    std::optional<std::string> findOriginalUrl(const std::string& code) const override
+    LookupResult findByCode(const std::string& code) const override
     {
         if (code == "custom01")
         {
-            return std::string("https://example.com/custom");
+            return { ShortLinkRecord { 1,
+                                       "custom01",
+                                       "https://example.com/custom",
+                                       Status::Active,
+                                       std::nullopt,
+                                       1,
+                                       1 },
+                     LookupSource::Memory };
         }
 
+        return { std::nullopt, LookupSource::Memory };
+    }
+
+    LookupSource defaultLookupSource() const noexcept override
+    {
+        return LookupSource::Memory;
+    }
+
+    std::vector<ShortLinkRecord> list(const ListQuery&) const override { return {}; }
+
+    std::optional<ShortLinkRecord> updateLifecycle(
+        const std::string&,
+        const LifecycleUpdate&) override
+    {
         return std::nullopt;
     }
 
     int createCalls { 0 };
+};
+
+class FailingLookupRepository : public shortlink::ShortLinkRepository
+{
+public:
+    std::optional<ShortLinkRecord> create(
+        const std::string&,
+        std::optional<std::int64_t> = std::nullopt) override
+    {
+        return std::nullopt;
+    }
+
+    LookupResult findByCode(const std::string&) const override
+    {
+        throw std::runtime_error("lookup failed");
+    }
+
+    LookupSource defaultLookupSource() const noexcept override
+    {
+        return LookupSource::Mysql;
+    }
+
+    std::vector<ShortLinkRecord> list(const ListQuery&) const override { return {}; }
+
+    std::optional<ShortLinkRecord> updateLifecycle(
+        const std::string&,
+        const LifecycleUpdate&) override
+    {
+        return std::nullopt;
+    }
 };
 
 void testShortLinkServiceUrlValidation()
@@ -457,13 +520,14 @@ void testShortLinkServiceCreatesAndFindsMemoryLink()
         service.createShortLink(originalUrl);
 
     expect(shortLink.has_value(), "valid URL should create a short link");
-    expect(shortLink->code == "000001", "first memory short code should be deterministic");
+    expect(shortLink->record.code == "000001", "first memory short code should be deterministic");
     expect(shortLink->shortUrl == "/s/000001", "short URL should be based on code");
-    expect(shortLink->originalUrl == originalUrl, "short link should keep original URL");
+    expect(shortLink->record.originalUrl == originalUrl, "short link should keep original URL");
 
-    const std::optional<std::string> found = service.findOriginalUrl(shortLink->code);
-    expect(found.has_value(), "created code should be findable");
-    expect(*found == originalUrl, "created code should resolve to original URL");
+    const shortlink::ShortLinkService::RedirectResult found = service.resolve(shortLink->record.code);
+    expect(found.status == shortlink::ShortLinkService::RedirectStatus::Success,
+           "created code should be findable");
+    expect(found.originalUrl == originalUrl, "created code should resolve to original URL");
 }
 
 void testMemoryRepositoryCreatesUniqueCodes()
@@ -494,13 +558,125 @@ void testShortLinkServiceRejectsInvalidUrlWithoutRepositoryWrite()
     expect(repository.createCalls == 0, "invalid URL should not call repository create");
 }
 
+void testRedirectErrorMetricIsNotRecordedForInternalLookup()
+{
+    FailingLookupRepository repository;
+    shortlink::ShortLinkMetrics metrics;
+    shortlink::ShortLinkService service(repository, &metrics);
+
+    try
+    {
+        service.resolve("failure");
+        throw TestFailure("redirect lookup failure should propagate");
+    }
+    catch (const TestFailure&)
+    {
+        throw;
+    }
+    catch (const std::runtime_error&)
+    {
+    }
+
+    try
+    {
+        service.get("failure");
+        throw TestFailure("internal lookup failure should propagate");
+    }
+    catch (const TestFailure&)
+    {
+        throw;
+    }
+    catch (const std::runtime_error&)
+    {
+    }
+
+    const std::string rendered = metrics.renderPrometheus();
+    expect(rendered.find("haohttp_shortlink_redirect_total{result=\"error\",source=\"mysql\"} 1") !=
+               std::string::npos,
+           "only redirect lookup should record redirect error metric");
+}
+
 void testMemoryRepositoryMissingCode()
 {
     shortlink::MemoryShortLinkRepository repository;
     repository.create("https://example.com/existing");
 
-    const std::optional<std::string> missing = repository.findOriginalUrl("missing");
-    expect(!missing.has_value(), "missing memory code should return no URL");
+    const shortlink::ShortLinkRepository::LookupResult missing = repository.findByCode("missing");
+    expect(!missing.record.has_value(), "missing memory code should return no record");
+}
+
+void testShortLinkLifecycleDisabledAndExpired()
+{
+    shortlink::MemoryShortLinkRepository repository;
+    shortlink::ShortLinkMetrics metrics;
+    shortlink::ShortLinkService service(repository, &metrics);
+
+    const std::optional<shortlink::ShortLinkService::ShortLink> created =
+        service.createShortLink("https://example.com/lifecycle");
+    expect(created.has_value(), "lifecycle link should be created");
+
+    shortlink::ShortLinkRepository::LifecycleUpdate disable;
+    disable.status = shortlink::ShortLinkRepository::Status::Disabled;
+    expect(service.updateLifecycle(created->record.code, disable).has_value(),
+           "existing link should be disabled");
+    expect(service.resolve(created->record.code).status ==
+               shortlink::ShortLinkService::RedirectStatus::Disabled,
+           "disabled link should not resolve");
+
+    shortlink::ShortLinkRepository::LifecycleUpdate expire;
+    expire.status = shortlink::ShortLinkRepository::Status::Active;
+    expire.expiresAtProvided = true;
+    expire.expiresAt = shortlink::ShortLinkService::nowEpochSeconds() - 1;
+    expect(service.updateLifecycle(created->record.code, expire).has_value(),
+           "existing link should accept lifecycle update");
+    expect(service.resolve(created->record.code).status ==
+               shortlink::ShortLinkService::RedirectStatus::Expired,
+           "expired link should not resolve");
+
+    const std::string rendered = metrics.renderPrometheus();
+    expect(rendered.find("result=\"disabled\",source=\"memory\"} 1") != std::string::npos,
+           "metrics should distinguish disabled redirects");
+    expect(rendered.find("result=\"expired\",source=\"memory\"} 1") != std::string::npos,
+           "metrics should distinguish expired redirects");
+}
+
+void testMemoryRepositoryLifecycleList()
+{
+    shortlink::MemoryShortLinkRepository repository;
+    const auto first = repository.create("https://example.com/one");
+    const auto second = repository.create("https://example.com/two");
+    const auto third = repository.create("https://example.com/three");
+    expect(first && second && third, "list fixtures should be created");
+
+    shortlink::ShortLinkRepository::LifecycleUpdate disable;
+    disable.status = shortlink::ShortLinkRepository::Status::Disabled;
+    repository.updateLifecycle(second->code, disable);
+
+    shortlink::ShortLinkRepository::ListQuery firstPage;
+    firstPage.limit = 2;
+    const auto page = repository.list(firstPage);
+    expect(page.size() == 2 && page[0].id == first->id && page[1].id == second->id,
+           "memory list should be stable and ordered by id");
+
+    shortlink::ShortLinkRepository::ListQuery activePage;
+    activePage.cursor = first->id;
+    activePage.limit = 10;
+    activePage.status = shortlink::ShortLinkRepository::Status::Active;
+    const auto active = repository.list(activePage);
+    expect(active.size() == 1 && active[0].id == third->id,
+           "memory list should support cursor and status filter");
+}
+
+void testUtcTimestampParsing()
+{
+    const auto leapDay = shortlink::ShortLinkService::parseUtcTimestamp("2028-02-29T12:34:56Z");
+    expect(leapDay.has_value(), "valid leap-day UTC timestamp should parse");
+    expect(shortlink::ShortLinkService::formatUtcTimestamp(*leapDay) == "2028-02-29T12:34:56Z",
+           "UTC timestamp should round trip");
+    expect(!shortlink::ShortLinkService::parseUtcTimestamp("2027-02-29T12:34:56Z"),
+           "invalid calendar date should be rejected");
+    expect(!shortlink::ShortLinkService::parseUtcTimestamp("2028-02-29T12:34:56+08:00"),
+           "non-UTC timestamp should be rejected by v1.7 format");
 }
 
 } // namespace
@@ -526,7 +702,11 @@ int main()
         {"shortlink service creates and finds memory link", testShortLinkServiceCreatesAndFindsMemoryLink},
         {"memory repository creates unique codes", testMemoryRepositoryCreatesUniqueCodes},
         {"shortlink service rejects invalid URL without repository write", testShortLinkServiceRejectsInvalidUrlWithoutRepositoryWrite},
-        {"memory repository missing code", testMemoryRepositoryMissingCode}
+        {"redirect error metric excludes internal lookup", testRedirectErrorMetricIsNotRecordedForInternalLookup},
+        {"memory repository missing code", testMemoryRepositoryMissingCode},
+        {"shortlink lifecycle disabled and expired", testShortLinkLifecycleDisabledAndExpired},
+        {"memory repository lifecycle list", testMemoryRepositoryLifecycleList},
+        {"UTC timestamp parsing", testUtcTimestampParsing}
     };
 
     int failed = 0;

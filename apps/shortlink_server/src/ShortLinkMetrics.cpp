@@ -10,11 +10,15 @@ namespace
 const std::array<const char*, 2> kStorageLabels { "memory", "mysql" };
 const std::array<const char*, 3> kCreateResultLabels { "success", "invalid", "error" };
 const std::array<const char*, 3> kRedirectSourceLabels { "memory", "mysql", "redis" };
-const std::array<const char*, 3> kRedirectResultLabels { "success", "not_found", "error" };
-const std::array<const char*, 2> kCacheOperationLabels { "get", "set" };
+const std::array<const char*, 5> kRedirectResultLabels {
+    "success", "not_found", "disabled", "expired", "error"
+};
+const std::array<const char*, 3> kCacheOperationLabels { "get", "set", "delete" };
 const std::array<const char*, 4> kCacheResultLabels { "hit", "miss", "success", "error" };
 const std::array<const char*, 2> kBackendLabels { "mysql", "redis" };
-const std::array<const char*, 5> kBackendOperationLabels { "create", "find", "get", "set", "rate_limit" };
+const std::array<const char*, 8> kBackendOperationLabels {
+    "create", "find", "list", "update", "get", "set", "delete", "rate_limit"
+};
 const std::array<const char*, 3> kRateLimitResultLabels { "allowed", "limited", "error" };
 
 template <typename Counters>
@@ -108,7 +112,8 @@ std::string ShortLinkMetrics::renderPrometheus() const
             const bool validCombination =
                 (operation == static_cast<std::size_t>(CacheOperation::Get) &&
                  result != static_cast<std::size_t>(CacheResult::Success)) ||
-                (operation == static_cast<std::size_t>(CacheOperation::Set) &&
+                ((operation == static_cast<std::size_t>(CacheOperation::Set) ||
+                  operation == static_cast<std::size_t>(CacheOperation::Delete)) &&
                  (result == static_cast<std::size_t>(CacheResult::Success) ||
                   result == static_cast<std::size_t>(CacheResult::Error)));
             if (!validCombination)
@@ -132,7 +137,7 @@ std::string ShortLinkMetrics::renderPrometheus() const
         {
             const bool validCombination =
                 (backend == static_cast<std::size_t>(Backend::Mysql) &&
-                 operation <= static_cast<std::size_t>(BackendOperation::Find)) ||
+                 operation <= static_cast<std::size_t>(BackendOperation::Update)) ||
                 (backend == static_cast<std::size_t>(Backend::Redis) &&
                  operation >= static_cast<std::size_t>(BackendOperation::Get));
             if (!validCombination)

@@ -22,7 +22,8 @@ constexpr std::size_t kMinCodeLength = 6;
 } // namespace
 
 std::optional<ShortLinkRepository::ShortLinkRecord>
-MySqlShortLinkRepository::create(const std::string& originalUrl)
+MySqlShortLinkRepository::create(const std::string& originalUrl,
+                                 std::optional<std::int64_t> expiresAt)
 {
     std::shared_ptr<http::db::DbConnection> conn;
 
@@ -30,7 +31,18 @@ MySqlShortLinkRepository::create(const std::string& originalUrl)
     {
         conn = http::db::DbConnectionPool::getInstance().getConnection();
         conn->executeRawUpdate("START TRANSACTION");
-        conn->executeUpdate("INSERT INTO short_links (original_url) VALUES (?)", originalUrl);
+        if (expiresAt)
+        {
+            conn->executeUpdate(
+                "INSERT INTO short_links (original_url, expires_at) "
+                "VALUES (?, DATE_ADD('1970-01-01 00:00:00', INTERVAL ? SECOND))",
+                originalUrl,
+                *expiresAt);
+        }
+        else
+        {
+            conn->executeUpdate("INSERT INTO short_links (original_url) VALUES (?)", originalUrl);
+        }
 
         std::unique_ptr<sql::ResultSet> idResult(
             conn->executeQuery("SELECT LAST_INSERT_ID()"));
@@ -46,12 +58,21 @@ MySqlShortLinkRepository::create(const std::string& originalUrl)
         conn->executeUpdate("UPDATE short_links SET code = ? WHERE id = ?",
                             code,
                             idString);
-        conn->executeRawUpdate("COMMIT");
 
-        return ShortLinkRecord {
-            code,
-            originalUrl
-        };
+        std::unique_ptr<sql::ResultSet> recordResult(conn->executeQuery(
+            "SELECT id, code, original_url, status, "
+            "TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', expires_at) AS expires_at_epoch, "
+            "UNIX_TIMESTAMP(created_at) AS created_at_epoch, "
+            "UNIX_TIMESTAMP(updated_at) AS updated_at_epoch "
+            "FROM short_links WHERE id = ? LIMIT 1",
+            idString));
+        if (!recordResult || !recordResult->next())
+        {
+            throw std::runtime_error("Failed to read created short link");
+        }
+        const ShortLinkRecord record = readRecord(recordResult.get());
+        conn->executeRawUpdate("COMMIT");
+        return record;
     }
     catch (const std::exception& e)
     {
@@ -95,44 +116,172 @@ MySqlShortLinkRepository::create(const std::string& originalUrl)
     }
 }
 
-std::optional<std::string> MySqlShortLinkRepository::findOriginalUrl(const std::string& code) const
+ShortLinkRepository::LookupResult MySqlShortLinkRepository::findByCode(
+    const std::string& code) const
 {
     try
     {
         auto conn = http::db::DbConnectionPool::getInstance().getConnection();
         std::unique_ptr<sql::ResultSet> result(
-            conn->executeQuery("SELECT original_url FROM short_links WHERE code = ? LIMIT 1",
+            conn->executeQuery(
+                               "SELECT id, code, original_url, status, "
+                               "TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', expires_at) "
+                               "AS expires_at_epoch, "
+                               "UNIX_TIMESTAMP(created_at) AS created_at_epoch, "
+                               "UNIX_TIMESTAMP(updated_at) AS updated_at_epoch "
+                               "FROM short_links WHERE code = ? LIMIT 1",
                                code));
 
         if (!result || !result->next())
         {
-            if (metrics_ != nullptr)
-            {
-                metrics_->recordRedirect(ShortLinkMetrics::RedirectResult::NotFound,
-                                         ShortLinkMetrics::RedirectSource::Mysql);
-            }
-            return std::nullopt;
+            return { std::nullopt, LookupSource::Mysql };
         }
-
-        const std::string originalUrl = result->getString("original_url");
-        if (metrics_ != nullptr)
-        {
-            metrics_->recordRedirect(ShortLinkMetrics::RedirectResult::Success,
-                                     ShortLinkMetrics::RedirectSource::Mysql);
-        }
-        return originalUrl;
+        return { readRecord(result.get()), LookupSource::Mysql };
     }
     catch (...)
     {
         if (metrics_ != nullptr)
         {
-            metrics_->recordRedirect(ShortLinkMetrics::RedirectResult::Error,
-                                     ShortLinkMetrics::RedirectSource::Mysql);
             metrics_->recordBackendError(ShortLinkMetrics::Backend::Mysql,
                                          ShortLinkMetrics::BackendOperation::Find);
         }
         throw;
     }
+}
+
+std::vector<ShortLinkRepository::ShortLinkRecord> MySqlShortLinkRepository::list(
+    const ListQuery& query) const
+{
+    try
+    {
+        auto conn = http::db::DbConnectionPool::getInstance().getConnection();
+        std::unique_ptr<sql::ResultSet> result;
+        const std::string fields =
+            "SELECT id, code, original_url, status, "
+            "TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', expires_at) AS expires_at_epoch, "
+            "UNIX_TIMESTAMP(created_at) AS created_at_epoch, "
+            "UNIX_TIMESTAMP(updated_at) AS updated_at_epoch FROM short_links ";
+        if (query.status)
+        {
+            const std::string statusValue = statusToString(*query.status);
+            result.reset(conn->executeQuery(
+                fields + "WHERE id > ? AND status = ? ORDER BY id ASC LIMIT ?",
+                query.cursor,
+                statusValue,
+                query.limit));
+        }
+        else
+        {
+            result.reset(conn->executeQuery(
+                fields + "WHERE id > ? ORDER BY id ASC LIMIT ?", query.cursor, query.limit));
+        }
+
+        std::vector<ShortLinkRecord> records;
+        while (result && result->next())
+        {
+            records.push_back(readRecord(result.get()));
+        }
+        return records;
+    }
+    catch (...)
+    {
+        if (metrics_ != nullptr)
+        {
+            metrics_->recordBackendError(ShortLinkMetrics::Backend::Mysql,
+                                         ShortLinkMetrics::BackendOperation::List);
+        }
+        throw;
+    }
+}
+
+std::optional<ShortLinkRepository::ShortLinkRecord> MySqlShortLinkRepository::updateLifecycle(
+    const std::string& code,
+    const LifecycleUpdate& update)
+{
+    try
+    {
+        auto conn = http::db::DbConnectionPool::getInstance().getConnection();
+        const std::string statusValue = update.status ? statusToString(*update.status) : "";
+        if (update.status && update.expiresAtProvided && update.expiresAt)
+        {
+            conn->executeUpdate(
+                "UPDATE short_links SET status = ?, "
+                "expires_at = DATE_ADD('1970-01-01 00:00:00', INTERVAL ? SECOND) "
+                "WHERE code = ?",
+                statusValue,
+                *update.expiresAt,
+                code);
+        }
+        else if (update.status && update.expiresAtProvided)
+        {
+            conn->executeUpdate(
+                "UPDATE short_links SET status = ?, expires_at = NULL WHERE code = ?",
+                statusValue,
+                code);
+        }
+        else if (update.status)
+        {
+            conn->executeUpdate(
+                "UPDATE short_links SET status = ? WHERE code = ?", statusValue, code);
+        }
+        else if (update.expiresAtProvided && update.expiresAt)
+        {
+            conn->executeUpdate(
+                "UPDATE short_links SET "
+                "expires_at = DATE_ADD('1970-01-01 00:00:00', INTERVAL ? SECOND) "
+                "WHERE code = ?",
+                *update.expiresAt,
+                code);
+        }
+        else if (update.expiresAtProvided)
+        {
+            conn->executeUpdate("UPDATE short_links SET expires_at = NULL WHERE code = ?", code);
+        }
+
+        std::unique_ptr<sql::ResultSet> result(conn->executeQuery(
+            "SELECT id, code, original_url, status, "
+            "TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', expires_at) AS expires_at_epoch, "
+            "UNIX_TIMESTAMP(created_at) AS created_at_epoch, "
+            "UNIX_TIMESTAMP(updated_at) AS updated_at_epoch "
+            "FROM short_links WHERE code = ? LIMIT 1",
+            code));
+        if (!result || !result->next())
+        {
+            return std::nullopt;
+        }
+        return readRecord(result.get());
+    }
+    catch (...)
+    {
+        if (metrics_ != nullptr)
+        {
+            metrics_->recordBackendError(ShortLinkMetrics::Backend::Mysql,
+                                         ShortLinkMetrics::BackendOperation::Update);
+        }
+        throw;
+    }
+}
+
+ShortLinkRepository::ShortLinkRecord MySqlShortLinkRepository::readRecord(sql::ResultSet* result)
+{
+    const std::optional<Status> status = parseStatus(result->getString("status"));
+    if (!status)
+    {
+        throw std::runtime_error("Unknown short link status");
+    }
+
+    ShortLinkRecord record;
+    record.id = result->getUInt64("id");
+    record.code = result->getString("code");
+    record.originalUrl = result->getString("original_url");
+    record.status = *status;
+    if (!result->isNull("expires_at_epoch"))
+    {
+        record.expiresAt = result->getInt64("expires_at_epoch");
+    }
+    record.createdAt = result->getInt64("created_at_epoch");
+    record.updatedAt = result->getInt64("updated_at_epoch");
+    return record;
 }
 
 std::string MySqlShortLinkRepository::encodeBase62(std::uint64_t value)
