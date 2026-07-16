@@ -134,10 +134,11 @@ expect_contains "${body}" '"status":"ready"' "readiness body"
 echo "PASS: GET /api/health/ready"
 
 original_url="https://example.com/api-smoke"
+expires_at="$(date -u -d '+10 minutes' '+%Y-%m-%dT%H:%M:%SZ')"
 status="$(curl -sS -o "${body_file}" -w "%{http_code}" \
     -X POST "${BASE_URL}/api/short-links" \
     -H 'Content-Type: application/json' \
-    -d "{\"url\":\"${original_url}\"}")"
+    -d "{\"url\":\"${original_url}\",\"expires_at\":\"${expires_at}\"}")"
 body="$(cat "${body_file}")"
 expect_eq "${status}" "201" "create short link status"
 expect_contains "${body}" "\"original_url\":\"${original_url}\"" "create short link body"
@@ -147,7 +148,26 @@ if [[ -z "${code}" ]]; then
     fail "create short link response did not contain code: ${body}"
 fi
 expect_contains "${body}" "\"short_url\":\"/s/${code}\"" "create short link short_url"
+expect_contains "${body}" "\"expires_at\":\"${expires_at}\"" "create short link expiry"
 echo "PASS: POST /api/short-links"
+
+status="$(curl -sS -o "${body_file}" -w "%{http_code}" \
+    -X POST "${BASE_URL}/api/short-links" \
+    -H 'Content-Type: application/json' \
+    -d '{"url":"https://example.com/already-expired","expires_at":"2000-01-01T00:00:00Z"}')"
+body="$(cat "${body_file}")"
+expect_eq "${status}" "400" "past create expiry status"
+expect_contains "${body}" '"code":"invalid_expires_at"' "past create expiry body"
+echo "PASS: POST /api/short-links rejects past expires_at"
+
+status="$(curl -sS -o "${body_file}" -w "%{http_code}" \
+    -X POST "${BASE_URL}/api/short-links" \
+    -H 'Content-Type: application/json' \
+    -d '{"url":"https://example.com/trailing-comma",}')"
+body="$(cat "${body_file}")"
+expect_eq "${status}" "400" "trailing-comma JSON status"
+expect_contains "${body}" '"code":"invalid_request"' "trailing-comma JSON body"
+echo "PASS: POST /api/short-links rejects trailing-comma JSON"
 
 status="$(curl -sS -D "${header_file}" -o "${body_file}" -w "%{http_code}" \
     "${BASE_URL}/s/${code}")"
@@ -155,6 +175,50 @@ headers="$(tr -d '\r' < "${header_file}")"
 expect_eq "${status}" "302" "redirect status"
 expect_contains "${headers}" "Location: ${original_url}" "redirect Location header"
 echo "PASS: GET /s/${code}"
+
+status="$(curl -sS -o "${body_file}" -w "%{http_code}" \
+    "${BASE_URL}/internal/short-links/${code}")"
+body="$(cat "${body_file}")"
+expect_eq "${status}" "200" "internal detail status"
+expect_contains "${body}" '"status":"active"' "internal detail lifecycle status"
+expect_contains "${body}" "\"expires_at\":\"${expires_at}\"" "internal detail expiry"
+echo "PASS: GET /internal/short-links/{code}"
+
+status="$(curl -sS -o "${body_file}" -w "%{http_code}" \
+    "${BASE_URL}/internal/short-links?limit=1&status=active")"
+body="$(cat "${body_file}")"
+expect_eq "${status}" "200" "internal list status"
+expect_contains "${body}" "\"code\":\"${code}\"" "internal list item"
+expect_contains "${body}" '"next_cursor":null' "internal list next cursor"
+echo "PASS: GET /internal/short-links"
+
+status="$(curl -sS -o "${body_file}" -w "%{http_code}" \
+    -X PUT "${BASE_URL}/internal/short-links/${code}" \
+    -H 'Content-Type: application/json' \
+    -d '{"status":"disabled"}')"
+body="$(cat "${body_file}")"
+expect_eq "${status}" "200" "disable short link status"
+expect_contains "${body}" '"status":"disabled"' "disable short link body"
+
+status="$(curl -sS -o "${body_file}" -w "%{http_code}" "${BASE_URL}/s/${code}")"
+expect_eq "${status}" "404" "disabled short link redirect status"
+echo "PASS: disabled short link does not redirect"
+
+past_expires_at="2000-01-01T00:00:00Z"
+status="$(curl -sS -o "${body_file}" -w "%{http_code}" \
+    -X PUT "${BASE_URL}/internal/short-links/${code}" \
+    -H 'Content-Type: application/json' \
+    -d "{\"status\":\"active\",\"expires_at\":\"${past_expires_at}\"}")"
+expect_eq "${status}" "200" "expire short link status"
+status="$(curl -sS -o "${body_file}" -w "%{http_code}" "${BASE_URL}/s/${code}")"
+expect_eq "${status}" "404" "expired short link redirect status"
+echo "PASS: expired short link does not redirect"
+
+status="$(curl -sS -o "${body_file}" -w "%{http_code}" \
+    -X PUT "${BASE_URL}/internal/short-links/${code}" \
+    -H 'Content-Type: application/json' \
+    -d '{"expires_at":null}')"
+expect_eq "${status}" "200" "clear short link expiry status"
 
 status="$(curl -sS -o "${body_file}" -w "%{http_code}" "${BASE_URL}/s/notfound")"
 body="$(cat "${body_file}")"
@@ -194,9 +258,11 @@ expect_contains "${headers}" "Content-Type: text/plain; version=0.0.4; charset=u
 expect_contains "${metrics_body}" 'haohttp_http_requests_total{method="GET",route="/api/health",status_class="2xx"}' "health HTTP metric"
 expect_contains "${metrics_body}" 'haohttp_http_request_duration_seconds_bucket{method="GET",route="/s/:code"' "redirect latency histogram"
 expect_contains "${metrics_body}" 'haohttp_shortlink_create_total{result="success",storage="memory"} 1' "successful create metric"
-expect_contains "${metrics_body}" 'haohttp_shortlink_create_total{result="invalid",storage="memory"} 1' "invalid create metric"
+expect_contains "${metrics_body}" 'haohttp_shortlink_create_total{result="invalid",storage="memory"} 3' "invalid create metric"
 expect_contains "${metrics_body}" 'haohttp_shortlink_redirect_total{result="success",source="memory"} 1' "successful redirect metric"
 expect_contains "${metrics_body}" 'haohttp_shortlink_redirect_total{result="not_found",source="memory"} 1' "missing redirect metric"
+expect_contains "${metrics_body}" 'haohttp_shortlink_redirect_total{result="disabled",source="memory"} 1' "disabled redirect metric"
+expect_contains "${metrics_body}" 'haohttp_shortlink_redirect_total{result="expired",source="memory"} 1' "expired redirect metric"
 expect_not_contains "${metrics_body}" "request_id" "metrics must not expose request IDs"
 echo "PASS: GET /metrics"
 

@@ -21,6 +21,7 @@ SERVER_LOG="${TMP_DIR}/shortlink_server.log"
 SERVER_PID=""
 TEST_CODE=""
 TEST_ORIGINAL_URL="https://example.com/integration-$(date +%s)-${RANDOM}"
+MIGRATION_TABLE="short_links_v17_migration_test"
 
 cleanup()
 {
@@ -35,6 +36,7 @@ cleanup()
 
     if command -v mysql >/dev/null 2>&1; then
         mysql_cmd -e "DELETE FROM short_links WHERE original_url = '${TEST_ORIGINAL_URL}'" >/dev/null 2>&1 || true
+        mysql_cmd -e "DROP TABLE IF EXISTS ${MIGRATION_TABLE}" >/dev/null 2>&1 || true
     fi
 
     rm -rf "${TMP_DIR}"
@@ -102,6 +104,27 @@ expect_eq "${table_count}" "1" "short_links table should exist"
 code_collation="$(mysql_cmd -N -B -e "SELECT COLLATION_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = '${MYSQL_DATABASE}' AND TABLE_NAME = 'short_links' AND COLUMN_NAME = 'code'")"
 expect_eq "${code_collation}" "utf8mb4_bin" "short_links.code should use case-sensitive collation"
 
+status_column_count="$(mysql_cmd -N -B -e "SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = '${MYSQL_DATABASE}' AND TABLE_NAME = 'short_links' AND COLUMN_NAME = 'status'")"
+if [[ "${status_column_count}" == "0" ]]; then
+    mysql_cmd < "${ROOT_DIR}/apps/shortlink_server/sql/003_add_short_link_lifecycle.sql"
+fi
+expect_eq "$(mysql_cmd -N -B -e "SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = '${MYSQL_DATABASE}' AND TABLE_NAME = 'short_links' AND COLUMN_NAME IN ('status', 'expires_at')")" "2" "lifecycle columns should exist"
+expect_eq "$(mysql_cmd -N -B -e "SELECT COUNT(*) FROM information_schema.TABLE_CONSTRAINTS WHERE CONSTRAINT_SCHEMA = '${MYSQL_DATABASE}' AND TABLE_NAME = 'short_links' AND CONSTRAINT_TYPE = 'CHECK'")" "1" "short_links lifecycle status CHECK should exist"
+
+mysql_cmd -e "DROP TABLE IF EXISTS ${MIGRATION_TABLE}; CREATE TABLE ${MIGRATION_TABLE} (id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT, code VARCHAR(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL, original_url TEXT NOT NULL, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, PRIMARY KEY (id), UNIQUE KEY uk_v17_migration_code (code)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4; INSERT INTO ${MIGRATION_TABLE} (code, original_url) VALUES ('legacy01', 'https://example.com/legacy');"
+sed "s/ALTER TABLE short_links/ALTER TABLE ${MIGRATION_TABLE}/" \
+    "${ROOT_DIR}/apps/shortlink_server/sql/003_add_short_link_lifecycle.sql" | mysql_cmd
+legacy_lifecycle="$(mysql_cmd -N -B -e "SELECT CONCAT(status, ':', IF(expires_at IS NULL, 'null', 'set')) FROM ${MIGRATION_TABLE} WHERE code = 'legacy01'")"
+expect_eq "${legacy_lifecycle}" "active:null" "v1.7 migration should preserve legacy rows as active and non-expiring"
+expect_eq "$(mysql_cmd -N -B -e "SELECT COUNT(*) FROM information_schema.TABLE_CONSTRAINTS WHERE CONSTRAINT_SCHEMA = '${MYSQL_DATABASE}' AND TABLE_NAME = '${MIGRATION_TABLE}' AND CONSTRAINT_TYPE = 'CHECK'")" "1" "migration test table lifecycle status CHECK should exist"
+if mysql_cmd -e "UPDATE ${MIGRATION_TABLE} SET status = 'invalid' WHERE code = 'legacy01'" \
+    >/dev/null 2>&1; then
+    fail "lifecycle status CHECK should reject invalid status"
+fi
+expect_eq "$(mysql_cmd -N -B -e "SELECT status FROM ${MIGRATION_TABLE} WHERE code = 'legacy01'")" "active" "rejected invalid status should leave legacy row unchanged"
+mysql_cmd -e "DROP TABLE ${MIGRATION_TABLE}"
+echo "PASS: v1.7 legacy table migration"
+
 redis_ping="$(redis-cli -h "${REDIS_HOST}" -p "${REDIS_PORT}" PING 2>/dev/null || true)"
 expect_eq "${redis_ping}" "PONG" "Redis should be reachable at ${REDIS_HOST}:${REDIS_PORT}"
 echo "PASS: Redis dependency reachable"
@@ -121,7 +144,7 @@ redis.enabled=true
 redis.host=${REDIS_HOST}
 redis.port=${REDIS_PORT}
 redis.database=0
-redis.ttl_seconds=3600
+redis.ttl_seconds=0
 redis.key_prefix=${REDIS_KEY_PREFIX}
 EOF
 
@@ -178,7 +201,13 @@ expect_contains "${headers}" "Location: ${TEST_ORIGINAL_URL}" "redirect Location
 echo "PASS: GET /s/${TEST_CODE} redirects from MySQL source"
 
 redis_after="$(redis-cli --raw -h "${REDIS_HOST}" -p "${REDIS_PORT}" GET "${REDIS_KEY_PREFIX}${TEST_CODE}" 2>/dev/null || true)"
-expect_eq "${redis_after}" "${TEST_ORIGINAL_URL}" "redirect should backfill Redis cache"
+expect_contains "${redis_after}" "v1|" "redirect should backfill versioned Redis cache"
+expect_contains "${redis_after}" "|active|" "versioned Redis cache should include lifecycle status"
+expect_contains "${redis_after}" "|${TEST_ORIGINAL_URL}" "versioned Redis cache should include original URL"
+initial_cache_ttl="$(redis-cli --raw -h "${REDIS_HOST}" -p "${REDIS_PORT}" TTL "${REDIS_KEY_PREFIX}${TEST_CODE}")"
+if (( initial_cache_ttl < 1 || initial_cache_ttl > 3600 )); then
+    fail "invalid zero cache TTL should fall back to bounded default, got ${initial_cache_ttl}"
+fi
 echo "PASS: Redis cache backfilled"
 
 status="$(curl -sS -D "${header_file}" -o "${body_file}" -w "%{http_code}" \
@@ -188,13 +217,69 @@ expect_eq "${status}" "302" "second redirect status"
 expect_contains "${headers}" "Location: ${TEST_ORIGINAL_URL}" "second redirect Location header"
 echo "PASS: GET /s/${TEST_CODE} redirects from Redis cache"
 
+status="$(curl -sS -o "${body_file}" -w "%{http_code}" \
+    "${BASE_URL}/internal/short-links/${TEST_CODE}")"
+body="$(cat "${body_file}")"
+expect_eq "${status}" "200" "internal MySQL detail status"
+expect_contains "${body}" '"status":"active"' "internal MySQL detail lifecycle status"
+
+status="$(curl -sS -o "${body_file}" -w "%{http_code}" \
+    "${BASE_URL}/internal/short-links?limit=1&status=active")"
+body="$(cat "${body_file}")"
+expect_eq "${status}" "200" "internal MySQL list status"
+expect_contains "${body}" '"items":[' "internal MySQL list body"
+echo "PASS: internal lifecycle detail and list using MySQL"
+
+status="$(curl -sS -o "${body_file}" -w "%{http_code}" \
+    -X PUT "${BASE_URL}/internal/short-links/${TEST_CODE}" \
+    -H 'Content-Type: application/json' \
+    -d '{"status":"disabled"}')"
+body="$(cat "${body_file}")"
+expect_eq "${status}" "200" "disable MySQL short link status"
+expect_contains "${body}" '"status":"disabled"' "disable MySQL short link body"
+expect_eq "$(redis-cli --raw -h "${REDIS_HOST}" -p "${REDIS_PORT}" EXISTS "${REDIS_KEY_PREFIX}${TEST_CODE}")" "0" "disable should invalidate hot cache"
+
+redis-cli -h "${REDIS_HOST}" -p "${REDIS_PORT}" SETEX \
+    "${REDIS_KEY_PREFIX}${TEST_CODE}" 3600 "${TEST_ORIGINAL_URL}" >/dev/null
+status="$(curl -sS -o "${body_file}" -w "%{http_code}" "${BASE_URL}/s/${TEST_CODE}")"
+expect_eq "${status}" "404" "legacy stale cache must not bypass disabled status"
+stale_replacement="$(redis-cli --raw -h "${REDIS_HOST}" -p "${REDIS_PORT}" GET "${REDIS_KEY_PREFIX}${TEST_CODE}" 2>/dev/null || true)"
+expect_contains "${stale_replacement}" "v1|" "legacy cache should be replaced with lifecycle-aware record"
+expect_contains "${stale_replacement}" "|disabled|" "replacement cache should preserve disabled status"
+echo "PASS: disabled link and legacy stale cache handling"
+
+status="$(curl -sS -o "${body_file}" -w "%{http_code}" \
+    -X PUT "${BASE_URL}/internal/short-links/${TEST_CODE}" \
+    -H 'Content-Type: application/json' \
+    -d '{"status":"active","expires_at":"2000-01-01T00:00:00Z"}')"
+expect_eq "${status}" "200" "expire MySQL short link status"
+status="$(curl -sS -o "${body_file}" -w "%{http_code}" "${BASE_URL}/s/${TEST_CODE}")"
+expect_eq "${status}" "404" "expired MySQL short link must not redirect"
+expect_eq "$(redis-cli --raw -h "${REDIS_HOST}" -p "${REDIS_PORT}" EXISTS "${REDIS_KEY_PREFIX}${TEST_CODE}")" "0" "expired record should not remain cached"
+
+future_expires_at="$(date -u -d '+10 minutes' '+%Y-%m-%dT%H:%M:%SZ')"
+status="$(curl -sS -o "${body_file}" -w "%{http_code}" \
+    -X PUT "${BASE_URL}/internal/short-links/${TEST_CODE}" \
+    -H 'Content-Type: application/json' \
+    -d "{\"expires_at\":\"${future_expires_at}\"}")"
+expect_eq "${status}" "200" "restore future expiry status"
+status="$(curl -sS -o /dev/null -w "%{http_code}" "${BASE_URL}/s/${TEST_CODE}")"
+expect_eq "${status}" "302" "future-expiring MySQL short link should redirect"
+cache_ttl="$(redis-cli --raw -h "${REDIS_HOST}" -p "${REDIS_PORT}" TTL "${REDIS_KEY_PREFIX}${TEST_CODE}")"
+if (( cache_ttl < 1 || cache_ttl > 600 )); then
+    fail "business expiry should cap Redis TTL, got ${cache_ttl}"
+fi
+echo "PASS: expired and future-expiring lifecycle semantics"
+
 metrics_body="$(curl -fsS "${BASE_URL}/metrics")"
-expect_contains "${metrics_body}" 'haohttp_shortlink_create_total{result="success",storage="mysql"} 1' "MySQL create metric"
-expect_contains "${metrics_body}" 'haohttp_shortlink_redirect_total{result="success",source="mysql"} 1' "MySQL redirect metric"
-expect_contains "${metrics_body}" 'haohttp_shortlink_redirect_total{result="success",source="redis"} 1' "Redis redirect metric"
-expect_contains "${metrics_body}" 'haohttp_shortlink_cache_operations_total{operation="get",result="miss"} 1' "Redis miss metric"
-expect_contains "${metrics_body}" 'haohttp_shortlink_cache_operations_total{operation="get",result="hit"} 1' "Redis hit metric"
-expect_contains "${metrics_body}" 'haohttp_shortlink_cache_operations_total{operation="set",result="success"} 1' "Redis set metric"
+expect_contains "${metrics_body}" 'haohttp_shortlink_create_total{result="success",storage="mysql"} ' "MySQL create metric"
+expect_contains "${metrics_body}" 'haohttp_shortlink_redirect_total{result="success",source="mysql"} ' "MySQL redirect metric"
+expect_contains "${metrics_body}" 'haohttp_shortlink_redirect_total{result="success",source="redis"} ' "Redis redirect metric"
+expect_contains "${metrics_body}" 'haohttp_shortlink_cache_operations_total{operation="get",result="miss"} ' "Redis miss metric"
+expect_contains "${metrics_body}" 'haohttp_shortlink_cache_operations_total{operation="get",result="hit"} ' "Redis hit metric"
+expect_contains "${metrics_body}" 'haohttp_shortlink_cache_operations_total{operation="set",result="success"} ' "Redis set metric"
+expect_contains "${metrics_body}" 'haohttp_shortlink_redirect_total{result="disabled",source="mysql"} ' "disabled redirect metric"
+expect_contains "${metrics_body}" 'haohttp_shortlink_redirect_total{result="expired",source="mysql"} ' "expired redirect metric"
 echo "PASS: MySQL / Redis metrics"
 
 echo "MySQL / Redis integration test passed"
