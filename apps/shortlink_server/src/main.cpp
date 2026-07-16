@@ -13,10 +13,14 @@
 
 #include <cctype>
 #include <chrono>
+#include <cstdint>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
+#include <unordered_map>
+#include <vector>
 
 #include <muduo/base/Logging.h>
 
@@ -121,9 +125,10 @@ ServerConfig loadServerConfig(const std::string& configPath)
         serverConfig.redisDatabase = 0;
     }
 
-    if (serverConfig.redisTtlSeconds < 0)
+    if (serverConfig.redisTtlSeconds <= 0 || serverConfig.redisTtlSeconds > 86400)
     {
-        std::cerr << "Invalid redis.ttl_seconds. Using default ttl_seconds 3600." << std::endl;
+        std::cerr << "redis.ttl_seconds must be between 1 and 86400. "
+                  << "Using default ttl_seconds 3600." << std::endl;
         serverConfig.redisTtlSeconds = 3600;
     }
 
@@ -247,7 +252,15 @@ std::optional<std::string> parseJsonString(const std::string& value, std::size_t
     return std::nullopt;
 }
 
-std::optional<std::string> parseUrlFromCreateRequest(const std::string& body)
+struct JsonStringOrNull
+{
+    bool isNull { false };
+    std::string value;
+};
+
+using SimpleJsonObject = std::unordered_map<std::string, JsonStringOrNull>;
+
+std::optional<SimpleJsonObject> parseSimpleJsonObject(const std::string& body)
 {
     std::size_t pos = 0;
     if (!consumeChar(body, &pos, '{'))
@@ -255,8 +268,7 @@ std::optional<std::string> parseUrlFromCreateRequest(const std::string& body)
         return std::nullopt;
     }
 
-    bool foundUrl = false;
-    std::optional<std::string> url;
+    SimpleJsonObject object;
 
     while (true)
     {
@@ -273,22 +285,38 @@ std::optional<std::string> parseUrlFromCreateRequest(const std::string& body)
             return std::nullopt;
         }
 
-        const std::optional<std::string> value = parseJsonString(body, &pos);
-        if (!value)
+        JsonStringOrNull value;
+        skipWhitespace(body, &pos);
+        if (body.compare(pos, 4, "null") == 0)
+        {
+            value.isNull = true;
+            pos += 4;
+        }
+        else
+        {
+            const std::optional<std::string> parsed = parseJsonString(body, &pos);
+            if (!parsed)
+            {
+                return std::nullopt;
+            }
+            value.value = *parsed;
+        }
+
+        if (object.find(*key) != object.end())
         {
             return std::nullopt;
         }
-
-        if (*key == "url")
-        {
-            foundUrl = true;
-            url = *value;
-        }
+        object.emplace(*key, std::move(value));
 
         skipWhitespace(body, &pos);
         if (pos < body.size() && body[pos] == ',')
         {
             ++pos;
+            skipWhitespace(body, &pos);
+            if (pos >= body.size() || body[pos] == '}')
+            {
+                return std::nullopt;
+            }
             continue;
         }
         if (pos < body.size() && body[pos] == '}')
@@ -301,12 +329,132 @@ std::optional<std::string> parseUrlFromCreateRequest(const std::string& body)
     }
 
     skipWhitespace(body, &pos);
-    if (pos != body.size() || !foundUrl)
+    if (pos != body.size())
+    {
+        return std::nullopt;
+    }
+    return object;
+}
+
+struct CreateRequest
+{
+    std::string url;
+    std::optional<std::int64_t> expiresAt;
+};
+
+std::optional<CreateRequest> parseCreateRequest(const std::string& body)
+{
+    const std::optional<SimpleJsonObject> object = parseSimpleJsonObject(body);
+    if (!object || object->find("url") == object->end() || object->at("url").isNull ||
+        object->size() > 2)
     {
         return std::nullopt;
     }
 
-    return url;
+    CreateRequest request;
+    request.url = object->at("url").value;
+    for (const auto& item : *object)
+    {
+        if (item.first != "url" && item.first != "expires_at")
+        {
+            return std::nullopt;
+        }
+    }
+    const auto expires = object->find("expires_at");
+    if (expires != object->end() && !expires->second.isNull)
+    {
+        request.expiresAt = shortlink::ShortLinkService::parseUtcTimestamp(expires->second.value);
+        if (!request.expiresAt)
+        {
+            return std::nullopt;
+        }
+    }
+    return request;
+}
+
+std::optional<shortlink::ShortLinkRepository::LifecycleUpdate> parseLifecycleUpdate(
+    const std::string& body)
+{
+    const std::optional<SimpleJsonObject> object = parseSimpleJsonObject(body);
+    if (!object || object->empty() || object->size() > 2)
+    {
+        return std::nullopt;
+    }
+
+    shortlink::ShortLinkRepository::LifecycleUpdate update;
+    for (const auto& item : *object)
+    {
+        if (item.first == "status")
+        {
+            if (item.second.isNull)
+            {
+                return std::nullopt;
+            }
+            update.status = shortlink::parseStatus(item.second.value);
+            if (!update.status)
+            {
+                return std::nullopt;
+            }
+        }
+        else if (item.first == "expires_at")
+        {
+            update.expiresAtProvided = true;
+            if (!item.second.isNull)
+            {
+                update.expiresAt = shortlink::ShortLinkService::parseUtcTimestamp(item.second.value);
+                if (!update.expiresAt)
+                {
+                    return std::nullopt;
+                }
+            }
+        }
+        else
+        {
+            return std::nullopt;
+        }
+    }
+    return update;
+}
+
+std::string recordJson(const shortlink::ShortLinkRepository::ShortLinkRecord& record)
+{
+    const std::string expiresAt = record.expiresAt
+                                      ? "\"" + shortlink::ShortLinkService::formatUtcTimestamp(
+                                                    *record.expiresAt) +
+                                            "\""
+                                      : "null";
+    return "{\"id\":" + std::to_string(record.id) +
+           ",\"code\":\"" + http::utils::escapeJsonString(record.code) +
+           "\",\"original_url\":\"" + http::utils::escapeJsonString(record.originalUrl) +
+           "\",\"status\":\"" + shortlink::statusToString(record.status) +
+           "\",\"expires_at\":" + expiresAt +
+           ",\"created_at\":\"" +
+           shortlink::ShortLinkService::formatUtcTimestamp(record.createdAt) +
+           "\",\"updated_at\":\"" +
+           shortlink::ShortLinkService::formatUtcTimestamp(record.updatedAt) + "\"}";
+}
+
+std::optional<std::uint64_t> parseUnsigned(const std::string& value)
+{
+    if (value.empty())
+    {
+        return std::nullopt;
+    }
+    std::uint64_t result = 0;
+    for (const char ch : value)
+    {
+        if (ch < '0' || ch > '9')
+        {
+            return std::nullopt;
+        }
+        const unsigned digit = static_cast<unsigned>(ch - '0');
+        if (result > (std::numeric_limits<std::uint64_t>::max() - digit) / 10)
+        {
+            return std::nullopt;
+        }
+        result = result * 10 + digit;
+    }
+    return result;
 }
 
 void handleHealth(const http::HttpRequest& req, http::HttpResponse* resp)
@@ -382,20 +530,29 @@ void handleCreateShortLink(const http::HttpRequest& req,
         return;
     }
 
-    const std::optional<std::string> originalUrl = parseUrlFromCreateRequest(req.getBody());
-    if (!originalUrl)
+    const std::optional<CreateRequest> request = parseCreateRequest(req.getBody());
+    if (!request)
     {
         metrics->recordCreate(shortlink::ShortLinkMetrics::CreateResult::Invalid, storage);
         resp->setErrorResponse(http::HttpResponse::k400BadRequest,
                                "invalid_request",
-                               "Request body must contain a string url field");
+                               "Request body must contain url and an optional UTC expires_at");
+        return;
+    }
+
+    if (request->expiresAt && *request->expiresAt <= shortlink::ShortLinkService::nowEpochSeconds())
+    {
+        metrics->recordCreate(shortlink::ShortLinkMetrics::CreateResult::Invalid, storage);
+        resp->setErrorResponse(http::HttpResponse::k400BadRequest,
+                               "invalid_expires_at",
+                               "expires_at must be in the future");
         return;
     }
 
     std::optional<shortlink::ShortLinkService::ShortLink> shortLink;
     try
     {
-        shortLink = service->createShortLink(*originalUrl);
+        shortLink = service->createShortLink(request->url, request->expiresAt);
     }
     catch (...)
     {
@@ -412,10 +569,14 @@ void handleCreateShortLink(const http::HttpRequest& req,
     }
 
     const std::string body =
-        "{\"code\":\"" + http::utils::escapeJsonString(shortLink->code) +
+        "{\"code\":\"" + http::utils::escapeJsonString(shortLink->record.code) +
         "\",\"short_url\":\"" + http::utils::escapeJsonString(shortLink->shortUrl) +
-        "\",\"original_url\":\"" + http::utils::escapeJsonString(shortLink->originalUrl) +
-        "\"}";
+        "\",\"original_url\":\"" + http::utils::escapeJsonString(shortLink->record.originalUrl) +
+        "\",\"status\":\"active\",\"expires_at\":" +
+        (shortLink->record.expiresAt
+             ? "\"" + shortlink::ShortLinkService::formatUtcTimestamp(*shortLink->record.expiresAt) + "\""
+             : "null") +
+        "}";
 
     setJsonResponse(resp,
                     http::HttpResponse::k201Created,
@@ -429,8 +590,8 @@ void handleRedirect(const http::HttpRequest& req,
                     shortlink::ShortLinkService* service)
 {
     const std::string code = req.getPathParameters("param1");
-    const std::optional<std::string> originalUrl = service->findOriginalUrl(code);
-    if (!originalUrl)
+    const shortlink::ShortLinkService::RedirectResult result = service->resolve(code);
+    if (result.status != shortlink::ShortLinkService::RedirectStatus::Success)
     {
         resp->setErrorResponse(http::HttpResponse::k404NotFound,
                                "short_link_not_found",
@@ -438,7 +599,124 @@ void handleRedirect(const http::HttpRequest& req,
         return;
     }
 
-    resp->setRedirect(*originalUrl);
+    resp->setRedirect(*result.originalUrl);
+}
+
+void handleInternalDetail(const http::HttpRequest& req,
+                          http::HttpResponse* resp,
+                          shortlink::ShortLinkService* service)
+{
+    const std::optional<shortlink::ShortLinkRepository::ShortLinkRecord> record =
+        service->get(req.getPathParameters("param1"));
+    if (!record)
+    {
+        resp->setErrorResponse(http::HttpResponse::k404NotFound,
+                               "short_link_not_found",
+                               "Short link not found");
+        return;
+    }
+    setJsonResponse(resp, http::HttpResponse::k200Ok, "OK", recordJson(*record));
+}
+
+void handleInternalList(const http::HttpRequest& req,
+                        http::HttpResponse* resp,
+                        shortlink::ShortLinkService* service)
+{
+    shortlink::ShortLinkRepository::ListQuery query;
+    std::size_t requestedLimit = 50;
+    const std::string cursorValue = req.getQueryParameters("cursor");
+    if (!cursorValue.empty())
+    {
+        const std::optional<std::uint64_t> cursor = parseUnsigned(cursorValue);
+        if (!cursor)
+        {
+            resp->setErrorResponse(http::HttpResponse::k400BadRequest,
+                                   "invalid_cursor",
+                                   "cursor must be an unsigned integer");
+            return;
+        }
+        query.cursor = *cursor;
+    }
+    const std::string limitValue = req.getQueryParameters("limit");
+    if (!limitValue.empty())
+    {
+        const std::optional<std::uint64_t> limit = parseUnsigned(limitValue);
+        if (!limit || *limit < 1 || *limit > 100)
+        {
+            resp->setErrorResponse(http::HttpResponse::k400BadRequest,
+                                   "invalid_limit",
+                                   "limit must be between 1 and 100");
+            return;
+        }
+        requestedLimit = static_cast<std::size_t>(*limit);
+    }
+    const std::string statusValue = req.getQueryParameters("status");
+    if (!statusValue.empty())
+    {
+        query.status = shortlink::parseStatus(statusValue);
+        if (!query.status)
+        {
+            resp->setErrorResponse(http::HttpResponse::k400BadRequest,
+                                   "invalid_status",
+                                   "status must be active or disabled");
+            return;
+        }
+    }
+
+    query.limit = requestedLimit + 1;
+    std::vector<shortlink::ShortLinkRepository::ShortLinkRecord> records = service->list(query);
+    const bool hasMore = records.size() > requestedLimit;
+    if (hasMore)
+    {
+        records.resize(requestedLimit);
+    }
+
+    std::string body = "{\"items\":[";
+    for (std::size_t i = 0; i < records.size(); ++i)
+    {
+        if (i > 0)
+        {
+            body += ',';
+        }
+        body += recordJson(records[i]);
+    }
+    body += "],\"next_cursor\":";
+    body += hasMore && !records.empty() ? std::to_string(records.back().id) : "null";
+    body += "}";
+    setJsonResponse(resp, http::HttpResponse::k200Ok, "OK", body);
+}
+
+void handleInternalUpdate(const http::HttpRequest& req,
+                          http::HttpResponse* resp,
+                          shortlink::ShortLinkService* service)
+{
+    if (!hasJsonContentType(req))
+    {
+        resp->setErrorResponse(http::HttpResponse::k400BadRequest,
+                               "invalid_request",
+                               "Content-Type must be application/json");
+        return;
+    }
+    const std::optional<shortlink::ShortLinkRepository::LifecycleUpdate> update =
+        parseLifecycleUpdate(req.getBody());
+    if (!update)
+    {
+        resp->setErrorResponse(http::HttpResponse::k400BadRequest,
+                               "invalid_request",
+                               "Only status and expires_at may be updated");
+        return;
+    }
+
+    const std::optional<shortlink::ShortLinkRepository::ShortLinkRecord> record =
+        service->updateLifecycle(req.getPathParameters("param1"), *update);
+    if (!record)
+    {
+        resp->setErrorResponse(http::HttpResponse::k404NotFound,
+                               "short_link_not_found",
+                               "Short link not found");
+        return;
+    }
+    setJsonResponse(resp, http::HttpResponse::k200Ok, "OK", recordJson(*record));
 }
 
 void handleMetrics(const http::HttpRequest& req,
@@ -524,7 +802,7 @@ int main(int argc, char* argv[])
             std::move(rateLimitConfig));
     }
 
-    shortlink::ShortLinkService shortLinkService(*shortLinkRepository);
+    shortlink::ShortLinkService shortLinkService(*shortLinkRepository, &shortLinkMetrics);
 
     server.setThreadNum(config.threadNum);
     server.Get("/api/health", handleHealth);
@@ -550,6 +828,20 @@ int main(int argc, char* argv[])
                     "/s/:code",
                     [&shortLinkService](const http::HttpRequest& req, http::HttpResponse* resp) {
                         handleRedirect(req, resp, &shortLinkService);
+                    });
+    server.Get("/internal/short-links", [&shortLinkService](const http::HttpRequest& req,
+                                                            http::HttpResponse* resp) {
+        handleInternalList(req, resp, &shortLinkService);
+    });
+    server.addRoute(http::HttpRequest::kGet,
+                    "/internal/short-links/:code",
+                    [&shortLinkService](const http::HttpRequest& req, http::HttpResponse* resp) {
+                        handleInternalDetail(req, resp, &shortLinkService);
+                    });
+    server.addRoute(http::HttpRequest::kPut,
+                    "/internal/short-links/:code",
+                    [&shortLinkService](const http::HttpRequest& req, http::HttpResponse* resp) {
+                        handleInternalUpdate(req, resp, &shortLinkService);
                     });
     if (config.metricsEnabled)
     {

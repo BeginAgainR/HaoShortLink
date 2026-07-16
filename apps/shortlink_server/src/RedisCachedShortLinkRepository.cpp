@@ -15,44 +15,45 @@ RedisCachedShortLinkRepository::RedisCachedShortLinkRepository(
 {}
 
 std::optional<ShortLinkRepository::ShortLinkRecord>
-RedisCachedShortLinkRepository::create(const std::string& originalUrl)
+RedisCachedShortLinkRepository::create(const std::string& originalUrl,
+                                       std::optional<std::int64_t> expiresAt)
 {
-    return sourceRepository_.create(originalUrl);
+    return sourceRepository_.create(originalUrl, expiresAt);
 }
 
-std::optional<std::string> RedisCachedShortLinkRepository::findOriginalUrl(const std::string& code) const
+ShortLinkRepository::LookupResult RedisCachedShortLinkRepository::findByCode(
+    const std::string& code) const
 {
-    std::optional<std::string> cachedOriginalUrl;
-    try
+    const std::optional<ShortLinkRecord> cached = cache_.get(code);
+    if (cached)
     {
-        cachedOriginalUrl = cache_.getOriginalUrl(code);
-    }
-    catch (...)
-    {
-        if (metrics_ != nullptr)
-        {
-            metrics_->recordRedirect(ShortLinkMetrics::RedirectResult::Error,
-                                     ShortLinkMetrics::RedirectSource::Redis);
-        }
-        throw;
-    }
-    if (cachedOriginalUrl)
-    {
-        if (metrics_ != nullptr)
-        {
-            metrics_->recordRedirect(ShortLinkMetrics::RedirectResult::Success,
-                                     ShortLinkMetrics::RedirectSource::Redis);
-        }
-        return cachedOriginalUrl;
+        return { cached, LookupSource::Redis };
     }
 
-    std::optional<std::string> originalUrl = sourceRepository_.findOriginalUrl(code);
-    if (originalUrl)
+    LookupResult result = sourceRepository_.findByCode(code);
+    if (result.record)
     {
-        cache_.setOriginalUrl(code, *originalUrl);
+        cache_.set(*result.record);
     }
+    return result;
+}
 
-    return originalUrl;
+std::vector<ShortLinkRepository::ShortLinkRecord> RedisCachedShortLinkRepository::list(
+    const ListQuery& query) const
+{
+    return sourceRepository_.list(query);
+}
+
+std::optional<ShortLinkRepository::ShortLinkRecord>
+RedisCachedShortLinkRepository::updateLifecycle(const std::string& code,
+                                                const LifecycleUpdate& update)
+{
+    std::optional<ShortLinkRecord> record = sourceRepository_.updateLifecycle(code, update);
+    if (record)
+    {
+        cache_.erase(code);
+    }
+    return record;
 }
 
 } // namespace shortlink

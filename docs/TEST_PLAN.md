@@ -1,7 +1,7 @@
 # 测试计划
 
-状态：持续维护；当前基线为 v1.6.6 本地端到端、干净克隆和 GitHub Actions 云端 CI 验证通过
-当前实现：已建立框架与业务基础测试、API 冒烟、MySQL / Redis 集成、Redis 不可用回退、异常场景、限流、健康语义、Compose 编排和监控冒烟入口；CI workflow 已配置覆盖构建、CTest、API smoke、脚本语法、依赖集成、限流以及 Prometheus / Grafana 端到端验证。
+状态：持续维护；v1.7 生命周期本地全量回归和 GitHub Actions 云端 CI 已通过
+当前实现：已建立框架与业务基础测试、API 冒烟、MySQL / Redis 集成、Redis 不可用回退、异常场景、限流、健康语义、Compose 编排和监控冒烟入口；v1.7 已覆盖迁移、正常、禁用、过期、内部查询、缓存失效和旧格式陈旧缓存场景。
 
 ## v1.3 执行顺序
 
@@ -112,6 +112,18 @@ HAOHTTP_TEST_HOST=haoHTTP@orb bash tests/scripts/run_integration_with_compose.sh
 bash tests/scripts/monitoring_smoke_test.sh
 bash tests/scripts/rate_limit_nginx_test.sh
 ```
+
+## v1.7 本地验证
+
+- Linux VM Release 配置、构建和 CTest 通过。
+- 内存模式 API smoke 覆盖创建过期时间、详情、列表、禁用、过期、非法尾随逗号和生命周期指标。
+- MySQL / Redis 集成覆盖旧表迁移默认值、状态 CHECK 存在且生效、版本化缓存、禁用失效、旧格式缓存淘汰、过期判断和业务 TTL。
+- 独立临时 MySQL / Redis 从空数据目录执行 `001`、`002`、`003` 后完成生命周期集成，验证正式表和迁移测试表的 CHECK 名称不冲突。
+- Redis 不可用 fallback、创建限流、MySQL readiness 故障恢复和异常场景回归通过。
+- 完整 Compose 镜像构建、Nginx、Prometheus、Grafana 和 Nginx 限流冒烟通过。
+- Nginx `/internal/` 返回 `404`，只绑定 localhost 的应用直连入口可以访问内部生命周期接口。
+- 独立目录 `/tmp/haoHTTP-v1.7-clean` 从 `HEAD` 干净克隆并应用当前 v1.7 diff 后，重新完成 Release 构建、CTest、API smoke 和 MySQL / Redis 生命周期集成；构建目录为 `/tmp/haoHTTP-v1.7-clean-build`。
+- v1.7 功能与文档提交 `1ce2312` 的 push run `29505767969` 已通过；`Linux build and tests` 与 `Prometheus and Grafana smoke` 两个 job 均成功。
 
 ## 测试分层
 

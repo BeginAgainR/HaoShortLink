@@ -32,7 +32,7 @@ services:
       redis:
         condition: service_healthy
     ports:
-      - "18080:8080"
+      - "127.0.0.1:18080:8080"
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/api/health/ready >/dev/null || exit 1"]
       interval: 5s

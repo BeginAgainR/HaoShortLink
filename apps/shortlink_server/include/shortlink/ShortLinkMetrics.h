@@ -39,6 +39,8 @@ public:
     {
         Success,
         NotFound,
+        Disabled,
+        Expired,
         Error,
         Count
     };
@@ -47,6 +49,7 @@ public:
     {
         Get,
         Set,
+        Delete,
         Count
     };
 
@@ -70,8 +73,11 @@ public:
     {
         Create,
         Find,
+        List,
+        Update,
         Get,
         Set,
+        Delete,
         RateLimit,
         Count
     };

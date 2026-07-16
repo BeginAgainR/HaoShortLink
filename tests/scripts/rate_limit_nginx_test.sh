@@ -110,6 +110,16 @@ for suffix in one two; do
     expect_eq "${status}" "201" "Nginx request ${suffix} inside allowance"
 done
 
+internal_code="$(sed -n 's/.*"code":"\([^"]*\)".*/\1/p' "${BODY_FILE}")"
+if [[ -z "${internal_code}" ]]; then
+    fail "create response did not contain code for internal boundary check"
+fi
+expect_eq "$(curl -sS -o /dev/null -w "%{http_code}" "${BASE_URL}/internal/short-links/${internal_code}")" "404" \
+    "Nginx should block internal lifecycle API"
+expect_eq "$(curl -sS -o /dev/null -w "%{http_code}" "${DIRECT_URL}/internal/short-links/${internal_code}")" "200" \
+    "localhost direct port should expose internal lifecycle API"
+echo "PASS: Nginx blocks internal lifecycle API while localhost direct access works"
+
 status="$(curl -sS -D "${HEADER_FILE}" -o "${BODY_FILE}" -w "%{http_code}" \
     -X POST "${BASE_URL}/api/short-links" \
     -H 'Content-Type: application/json' \

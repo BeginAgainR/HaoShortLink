@@ -13,6 +13,7 @@ HaoShortLink 是一个基于 muduo 网络库的 C++17 HTTP 框架项目，当前
 - v1.4 已完成性能与稳定性收口，建立 curl / `hey` 多模式基线，覆盖关键异常场景并验证 Nginx 入口；本地结果不作为生产承载承诺。
 - v1.5 已完成可观测性收口，覆盖 request ID、通用结构化请求日志、基础 HTTP / 短链指标、`/metrics`、本地 Prometheus / Grafana、最小 dashboard 和监控链路 CI 冒烟验证。
 - v1.6 已完成 Redis Lua 全局创建限流、fail-open、liveness / readiness、保护性测试和 GitHub Actions 云端 CI 收口。
+- v1.7 已完成链接状态、过期时间、内部详情 / 列表 / 更新接口、生命周期缓存失效、本地全量回归和 GitHub Actions 云端 CI 验证。
 - MySQL / Redis 依赖集成和 Prometheus / Grafana 监控冒烟已进入 CI；代表性 `hey` 小基线已完成 v1.4.0 / v1.5 相对回归，本地结果不作为生产承载承诺。
 - 旧五子棋业务代码已经清理，旧图片资源已移除。
 - 已完成请求日志、统一 JSON 错误响应、JSON 响应辅助和配置加载等框架基础能力。
@@ -43,6 +44,7 @@ tests/                      自动化测试和测试脚本
 - [中间件设计](docs/MIDDLEWARE_DESIGN.md)
 - [可观测性设计](docs/OBSERVABILITY_DESIGN.md)
 - [可靠性与流量保护设计](docs/RELIABILITY_DESIGN.md)
+- [链接生命周期设计](docs/LIFECYCLE_DESIGN.md)
 - [运行手册](docs/RUNBOOK.md)
 - [测试计划](docs/TEST_PLAN.md)
 - [压测计划](docs/BENCHMARK.md)
@@ -50,5 +52,5 @@ tests/                      自动化测试和测试脚本
 
 ## 说明
 
-当前短链接服务支持内存存储、MySQL 持久化、可选 Redis 查询缓存和可选 Redis 全局创建限流；已提供并验证本地 Docker Compose 编排，可启动 MySQL、Redis、`shortlink_server`、Nginx、Prometheus 和 Grafana；v1.3 已完成第一版自动化测试和 CI 收口，v1.4 已完成性能与稳定性基线，v1.5 已完成日志、指标、采集和最小 dashboard，v1.6 已完成本地回归、干净克隆和云端 CI 验证。消息队列尚未实现。
+当前短链接服务支持内存存储、MySQL 持久化、可选 Redis 查询缓存、可选 Redis 全局创建限流以及链接状态和过期时间；已提供并验证本地 Docker Compose 编排，可启动 MySQL、Redis、`shortlink_server`、Nginx、Prometheus 和 Grafana；v1.7 已完成生命周期能力和本地回归。消息队列尚未实现。
 未实现内容会在 `docs/` 中以“草案”“计划”或“暂缓”的形式记录，避免将未来能力描述为已完成能力。

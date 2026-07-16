@@ -76,7 +76,8 @@ Content-Type: application/json
 
 ```json
 {
-  "url": "https://example.com/very/long/path"
+  "url": "https://example.com/very/long/path",
+  "expires_at": "2026-08-01T00:00:00Z"
 }
 ```
 
@@ -85,7 +86,9 @@ V1 URL 校验规则：
 - `url` 字段必须存在。
 - `url` 字段必须是字符串。
 - `url` 字段必须以 `http://` 或 `https://` 开头。
-- 不在 V1 中实现域名解析、黑名单、过期时间或复杂安全策略。
+- `expires_at` 可省略；省略或为 `null` 表示永不过期。
+- `expires_at` 使用 `YYYY-MM-DDTHH:MM:SSZ` UTC 格式，创建时必须晚于当前时间。
+- 不在 V1 中实现域名解析、黑名单或复杂安全策略。
 
 成功状态码：
 
@@ -155,6 +158,35 @@ Location: https://example.com/very/long/path
 错误场景：
 
 - 短码不存在：`404 Not Found`。
+- 短码已禁用：`404 Not Found`。
+- 短码已过期：`404 Not Found`。
+
+三种不可跳转结果对公网使用相同响应，内部日志和指标仍分别记录实际结果。
+
+## v1.7 内部生命周期接口
+
+当前状态：已实现并完成本地回归。
+
+```text
+GET /internal/short-links/{code}
+GET /internal/short-links?limit=<1..100>&cursor=<id>&status=<active|disabled>
+PUT /internal/short-links/{code}
+```
+
+详情和列表返回 `id`、`code`、`original_url`、`status`、`expires_at`、`created_at` 和
+`updated_at`。列表按 `id` 正序分页，并返回下一页 cursor。
+
+更新请求只允许提供 `status` 和 `expires_at`：
+
+```json
+{
+  "status": "disabled",
+  "expires_at": null
+}
+```
+
+这组接口不经过 Nginx 公网入口，也不构成完整认证方案；只允许从应用所在主机或可信内部环境调用。
+用户身份、链接归属和正式权限控制留到 v2.0。
 
 ## 可观测性接口
 

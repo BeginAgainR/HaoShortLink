@@ -16,8 +16,18 @@ public:
                                    RedisShortLinkCache cache,
                                    ShortLinkMetrics* metrics = nullptr);
 
-    std::optional<ShortLinkRecord> create(const std::string& originalUrl) override;
-    std::optional<std::string> findOriginalUrl(const std::string& code) const override;
+    std::optional<ShortLinkRecord> create(
+        const std::string& originalUrl,
+        std::optional<std::int64_t> expiresAt = std::nullopt) override;
+    LookupResult findByCode(const std::string& code) const override;
+    LookupSource defaultLookupSource() const noexcept override
+    {
+        return sourceRepository_.defaultLookupSource();
+    }
+    std::vector<ShortLinkRecord> list(const ListQuery& query) const override;
+    std::optional<ShortLinkRecord> updateLifecycle(
+        const std::string& code,
+        const LifecycleUpdate& update) override;
 
 private:
     ShortLinkRepository& sourceRepository_;

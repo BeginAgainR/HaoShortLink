@@ -1,6 +1,8 @@
 #include "shortlink/MemoryShortLinkRepository.h"
 
 #include <algorithm>
+#include <chrono>
+#include <vector>
 
 namespace shortlink
 {
@@ -15,53 +17,89 @@ constexpr std::size_t kMinCodeLength = 6;
 } // namespace
 
 std::optional<ShortLinkRepository::ShortLinkRecord>
-MemoryShortLinkRepository::create(const std::string& originalUrl)
+MemoryShortLinkRepository::create(const std::string& originalUrl,
+                                  std::optional<std::int64_t> expiresAt)
 {
     std::lock_guard<std::mutex> lock(mutex_);
 
-    const std::string code = encodeBase62(nextId_++);
-    links_[code] = originalUrl;
+    const std::uint64_t id = nextId_++;
+    const std::string code = encodeBase62(id);
+    const std::int64_t now = std::chrono::duration_cast<std::chrono::seconds>(
+                                 std::chrono::system_clock::now().time_since_epoch())
+                                 .count();
 
-    return ShortLinkRecord {
+    const ShortLinkRecord record {
+        id,
         code,
-        originalUrl
+        originalUrl,
+        Status::Active,
+        expiresAt,
+        now,
+        now
     };
+    links_[code] = record;
+    return record;
 }
 
-std::optional<std::string> MemoryShortLinkRepository::findOriginalUrl(const std::string& code) const
+ShortLinkRepository::LookupResult MemoryShortLinkRepository::findByCode(
+    const std::string& code) const
 {
-    try
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto it = links_.find(code);
+    if (it == links_.end())
     {
-        std::lock_guard<std::mutex> lock(mutex_);
-
-        const auto it = links_.find(code);
-        if (it == links_.end())
-        {
-            if (metrics_ != nullptr)
-            {
-                metrics_->recordRedirect(ShortLinkMetrics::RedirectResult::NotFound,
-                                         ShortLinkMetrics::RedirectSource::Memory);
-            }
-            return std::nullopt;
-        }
-
-        const std::string originalUrl = it->second;
-        if (metrics_ != nullptr)
-        {
-            metrics_->recordRedirect(ShortLinkMetrics::RedirectResult::Success,
-                                     ShortLinkMetrics::RedirectSource::Memory);
-        }
-        return originalUrl;
+        return { std::nullopt, LookupSource::Memory };
     }
-    catch (...)
+    return { it->second, LookupSource::Memory };
+}
+
+std::vector<ShortLinkRepository::ShortLinkRecord> MemoryShortLinkRepository::list(
+    const ListQuery& query) const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<ShortLinkRecord> records;
+    records.reserve(links_.size());
+    for (const auto& item : links_)
     {
-        if (metrics_ != nullptr)
+        if (item.second.id <= query.cursor || (query.status && item.second.status != *query.status))
         {
-            metrics_->recordRedirect(ShortLinkMetrics::RedirectResult::Error,
-                                     ShortLinkMetrics::RedirectSource::Memory);
+            continue;
         }
-        throw;
+        records.push_back(item.second);
     }
+    std::sort(records.begin(), records.end(), [](const ShortLinkRecord& left,
+                                                  const ShortLinkRecord& right) {
+        return left.id < right.id;
+    });
+    if (records.size() > query.limit)
+    {
+        records.resize(query.limit);
+    }
+    return records;
+}
+
+std::optional<ShortLinkRepository::ShortLinkRecord> MemoryShortLinkRepository::updateLifecycle(
+    const std::string& code,
+    const LifecycleUpdate& update)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = links_.find(code);
+    if (it == links_.end())
+    {
+        return std::nullopt;
+    }
+    if (update.status)
+    {
+        it->second.status = *update.status;
+    }
+    if (update.expiresAtProvided)
+    {
+        it->second.expiresAt = update.expiresAt;
+    }
+    it->second.updatedAt = std::chrono::duration_cast<std::chrono::seconds>(
+                               std::chrono::system_clock::now().time_since_epoch())
+                               .count();
+    return it->second;
 }
 
 std::string MemoryShortLinkRepository::encodeBase62(std::uint64_t value)

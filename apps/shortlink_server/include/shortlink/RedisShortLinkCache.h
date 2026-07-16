@@ -1,6 +1,7 @@
 #pragma once
 
 #include "shortlink/ShortLinkMetrics.h"
+#include "shortlink/ShortLinkRepository.h"
 
 #include <optional>
 #include <string>
@@ -22,8 +23,9 @@ public:
 
     explicit RedisShortLinkCache(Config config, ShortLinkMetrics* metrics = nullptr);
 
-    std::optional<std::string> getOriginalUrl(const std::string& code) const;
-    bool setOriginalUrl(const std::string& code, const std::string& originalUrl) const;
+    std::optional<ShortLinkRepository::ShortLinkRecord> get(const std::string& code) const;
+    bool set(const ShortLinkRepository::ShortLinkRecord& record) const;
+    bool erase(const std::string& code) const;
 
 private:
     Config config_;
