@@ -463,7 +463,7 @@ v1.6 目标是基于 v1.5 的日志和指标补充基础流量保护与依赖降
 - 链接详情与列表。
 - 缓存失效。
 
-当前状态：已实现并完成本地回归，具体语义见 `docs/LIFECYCLE_DESIGN.md`；云端 CI 待分支推送后验证。
+当前状态：已实现并完成本地回归与 GitHub Actions 云端 CI，具体语义见 `docs/LIFECYCLE_DESIGN.md`。
 
 ### v1.7 执行批次草案
 

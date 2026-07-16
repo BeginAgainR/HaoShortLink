@@ -13,7 +13,7 @@ HaoShortLink 是一个基于 muduo 网络库的 C++17 HTTP 框架项目，当前
 - v1.4 已完成性能与稳定性收口，建立 curl / `hey` 多模式基线，覆盖关键异常场景并验证 Nginx 入口；本地结果不作为生产承载承诺。
 - v1.5 已完成可观测性收口，覆盖 request ID、通用结构化请求日志、基础 HTTP / 短链指标、`/metrics`、本地 Prometheus / Grafana、最小 dashboard 和监控链路 CI 冒烟验证。
 - v1.6 已完成 Redis Lua 全局创建限流、fail-open、liveness / readiness、保护性测试和 GitHub Actions 云端 CI 收口。
-- v1.7 已完成链接状态、过期时间、内部详情 / 列表 / 更新接口、生命周期缓存失效和本地全量回归；云端 CI 待分支推送后验证。
+- v1.7 已完成链接状态、过期时间、内部详情 / 列表 / 更新接口、生命周期缓存失效、本地全量回归和 GitHub Actions 云端 CI 验证。
 - MySQL / Redis 依赖集成和 Prometheus / Grafana 监控冒烟已进入 CI；代表性 `hey` 小基线已完成 v1.4.0 / v1.5 相对回归，本地结果不作为生产承载承诺。
 - 旧五子棋业务代码已经清理，旧图片资源已移除。
 - 已完成请求日志、统一 JSON 错误响应、JSON 响应辅助和配置加载等框架基础能力。

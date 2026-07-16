@@ -1,6 +1,6 @@
 # 测试计划
 
-状态：持续维护；v1.7 生命周期本地全量回归已通过，云端 CI 待分支推送后验证
+状态：持续维护；v1.7 生命周期本地全量回归和 GitHub Actions 云端 CI 已通过
 当前实现：已建立框架与业务基础测试、API 冒烟、MySQL / Redis 集成、Redis 不可用回退、异常场景、限流、健康语义、Compose 编排和监控冒烟入口；v1.7 已覆盖迁移、正常、禁用、过期、内部查询、缓存失效和旧格式陈旧缓存场景。
 
 ## v1.3 执行顺序
@@ -123,7 +123,7 @@ bash tests/scripts/rate_limit_nginx_test.sh
 - 完整 Compose 镜像构建、Nginx、Prometheus、Grafana 和 Nginx 限流冒烟通过。
 - Nginx `/internal/` 返回 `404`，只绑定 localhost 的应用直连入口可以访问内部生命周期接口。
 - 独立目录 `/tmp/haoHTTP-v1.7-clean` 从 `HEAD` 干净克隆并应用当前 v1.7 diff 后，重新完成 Release 构建、CTest、API smoke 和 MySQL / Redis 生命周期集成；构建目录为 `/tmp/haoHTTP-v1.7-clean-build`。
-- v1.7 分支尚未推送，因此不声明本阶段 GitHub Actions 已通过。
+- v1.7 功能与文档提交 `1ce2312` 的 push run `29505767969` 已通过；`Linux build and tests` 与 `Prometheus and Grafana smoke` 两个 job 均成功。
 
 ## 测试分层
 
