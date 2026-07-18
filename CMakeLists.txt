@@ -7,11 +7,18 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 include(CTest)
 
 find_package(OpenSSL REQUIRED)
+find_package(nlohmann_json 3.2.0 REQUIRED)
 find_path(HIREDIS_INCLUDE_DIR hiredis/hiredis.h)
 find_library(HIREDIS_LIBRARY hiredis)
+find_path(RDKAFKA_INCLUDE_DIR librdkafka/rdkafka.h)
+find_library(RDKAFKA_LIBRARY rdkafka)
 
 if (NOT HIREDIS_INCLUDE_DIR OR NOT HIREDIS_LIBRARY)
     message(FATAL_ERROR "hiredis development files are required")
+endif()
+
+if (NOT RDKAFKA_INCLUDE_DIR OR NOT RDKAFKA_LIBRARY)
+    message(FATAL_ERROR "librdkafka development files are required")
 endif()
 
 include_directories(
@@ -21,6 +28,7 @@ include_directories(
     /usr/include/mysql-cppconn-8
     /usr/include/mysql
     ${HIREDIS_INCLUDE_DIR}
+    ${RDKAFKA_INCLUDE_DIR}
     ${OPENSSL_INCLUDE_DIR}
 )
 
@@ -43,6 +51,12 @@ add_executable(shortlink_server
     ${HTTP_SERVER_SRC}
 )
 
+add_executable(shortlink_event_consumer
+    ${PROJECT_SOURCE_DIR}/apps/shortlink_event_consumer/src/main.cpp
+    ${PROJECT_SOURCE_DIR}/apps/shortlink_server/src/AccessEvent.cpp
+    ${PROJECT_SOURCE_DIR}/HttpServer/src/utils/Config.cpp
+)
+
 target_link_libraries(shortlink_server
     pthread
     muduo_net
@@ -50,8 +64,17 @@ target_link_libraries(shortlink_server
     mysqlcppconn
     mysqlclient
     ${HIREDIS_LIBRARY}
+    ${RDKAFKA_LIBRARY}
     ssl
     crypto
+    nlohmann_json::nlohmann_json
+)
+
+target_link_libraries(shortlink_event_consumer
+    pthread
+    muduo_base
+    ${RDKAFKA_LIBRARY}
+    nlohmann_json::nlohmann_json
 )
 
 if (BUILD_TESTING)

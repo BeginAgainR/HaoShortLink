@@ -1,0 +1,88 @@
+services:
+  shortlink_server:
+    command:
+      - ./shortlink_server
+      - apps/shortlink_server/config/server.kafka.container.conf.example
+
+  kafka:
+    image: ${SHORTLINK_KAFKA_IMAGE:-apache/kafka:4.3.1}
+    container_name: hao-shortlink-kafka
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: INTERNAL://:29092,CONTROLLER://:29093,EXTERNAL://:19092
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092,EXTERNAL://${SHORTLINK_KAFKA_EXTERNAL_HOST:-docker.orb.internal}:19092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:29093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_NUM_PARTITIONS: 3
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+    ports:
+      - "19092:19092"
+    volumes:
+      - hao_shortlink_kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - /opt/kafka/bin/kafka-topics.sh --bootstrap-server 127.0.0.1:29092 --list >/dev/null 2>&1
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 15s
+
+  kafka_topic_init:
+    image: ${SHORTLINK_KAFKA_IMAGE:-apache/kafka:4.3.1}
+    container_name: hao-shortlink-kafka-topic-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    command:
+      - /opt/kafka/bin/kafka-topics.sh
+      - --bootstrap-server
+      - kafka:29092
+      - --create
+      - --if-not-exists
+      - --topic
+      - hao-shortlink.access-events.v1
+      - --partitions
+      - "3"
+      - --replication-factor
+      - "1"
+      - --config
+      - cleanup.policy=delete
+      - --config
+      - retention.ms=604800000
+    restart: "no"
+
+  kafka_ui:
+    image: ${SHORTLINK_KAFKA_UI_IMAGE:-ghcr.io/kafbat/kafka-ui:v1.5.0}
+    container_name: hao-shortlink-kafka-ui
+    depends_on:
+      kafka_topic_init:
+        condition: service_completed_successfully
+    environment:
+      KAFKA_CLUSTERS_0_NAME: hao-shortlink-local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+      DYNAMIC_CONFIG_ENABLED: "false"
+    ports:
+      - "127.0.0.1:18081:8080"
+
+  shortlink_event_consumer:
+    image: ${SHORTLINK_SERVER_IMAGE:-hao-shortlink-server:dev}
+    container_name: hao-shortlink-event-consumer
+    depends_on:
+      kafka_topic_init:
+        condition: service_completed_successfully
+    command:
+      - ./shortlink_event_consumer
+      - apps/shortlink_event_consumer/config/consumer.container.conf.example
+    restart: unless-stopped
+
+volumes:
+  hao_shortlink_kafka_data:

@@ -1,0 +1,10 @@
+# Access event consumer configuration for a process running in the Linux VM.
+# Format: key=value
+
+consumer.bootstrap_servers=docker.orb.internal:19092
+consumer.topic=hao-shortlink.access-events.v1
+consumer.group_id=hao-shortlink-access-event-logger-v1
+consumer.client_id=hao-shortlink-event-consumer-vm
+consumer.auto_offset_reset=earliest
+consumer.poll_timeout_ms=500
+consumer.session_timeout_ms=10000

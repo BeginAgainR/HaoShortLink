@@ -9,6 +9,10 @@ HEY_BIN="${HAOHTTP_HEY_BIN:-hey}"
 BENCH_TOOL="${HAOHTTP_BENCH_TOOL:-auto}"
 MODE="${HAOHTTP_BENCH_MODE:-memory}"
 SCENARIO="${HAOHTTP_BENCH_SCENARIO:-all}"
+KAFKA_MODE="${HAOHTTP_BENCH_KAFKA_MODE:-disabled}"
+KAFKA_BOOTSTRAP_SERVERS="${HAOHTTP_KAFKA_BOOTSTRAP_SERVERS:-docker.orb.internal:19092}"
+KAFKA_UNAVAILABLE_BOOTSTRAP_SERVERS="${HAOHTTP_KAFKA_UNAVAILABLE_BOOTSTRAP_SERVERS:-127.0.0.1:1}"
+RESULT_MODE="${MODE}+kafka-${KAFKA_MODE}"
 PORT="${HAOHTTP_BENCH_PORT:-18084}"
 BASE_URL="${HAOHTTP_BENCH_BASE_URL:-http://127.0.0.1:${PORT}}"
 BASE_URL="${BASE_URL%/}"
@@ -84,6 +88,7 @@ Common environment variables:
   HAOHTTP_BENCH_BASE_URL      target an already running service or proxy instead of starting shortlink_server
   HAOHTTP_BENCH_CURL_MAX_TIME_SECONDS default: ${CURL_MAX_TIME_SECONDS}
   HAOHTTP_BENCH_MODE          default: ${MODE}
+  HAOHTTP_BENCH_KAFKA_MODE    disabled|normal|failure; default: ${KAFKA_MODE}
   HAOHTTP_BENCH_SCENARIO      default: ${SCENARIO}
   HAOHTTP_BENCH_TOOL          default: ${BENCH_TOOL}
 
@@ -164,6 +169,33 @@ EOF
             ;;
         *)
             fail "unsupported HAOHTTP_BENCH_MODE=${MODE}; use memory, mysql, or mysql-redis"
+            ;;
+    esac
+
+    case "${KAFKA_MODE}" in
+        disabled)
+            cat >> "${CONFIG_FILE}" <<EOF
+kafka.enabled=false
+EOF
+            ;;
+        normal|failure)
+            local bootstrap_servers="${KAFKA_BOOTSTRAP_SERVERS}"
+            if [[ "${KAFKA_MODE}" == "failure" ]]; then
+                bootstrap_servers="${KAFKA_UNAVAILABLE_BOOTSTRAP_SERVERS}"
+            fi
+            cat >> "${CONFIG_FILE}" <<EOF
+kafka.enabled=true
+kafka.bootstrap_servers=${bootstrap_servers}
+kafka.topic=hao-shortlink.access-events.v1
+kafka.client_id=hao-shortlink-benchmark-${KAFKA_MODE}
+kafka.queue_max_messages=10000
+kafka.message_timeout_ms=2000
+kafka.linger_ms=5
+kafka.shutdown_timeout_ms=500
+EOF
+            ;;
+        *)
+            fail "unsupported HAOHTTP_BENCH_KAFKA_MODE=${KAFKA_MODE}; use disabled, normal, or failure"
             ;;
     esac
 }
@@ -366,7 +398,7 @@ print_hey_result_row()
         note="${note}; hey followed redirects"
     fi
 
-    echo "| ${label} | ${MODE} | ${CONCURRENCY} | ${REQUESTS} requests | ${qps:-unknown} | ${average:-unknown} | ${p95:-unknown} | ${p99:-unknown} | ${error_rate} | ${note} |"
+    echo "| ${label} | ${RESULT_MODE} | ${CONCURRENCY} | ${REQUESTS} requests | ${qps:-unknown} | ${average:-unknown} | ${p95:-unknown} | ${p99:-unknown} | ${error_rate} | ${note} |"
 }
 
 now_ms()
@@ -490,7 +522,7 @@ print_curl_result_row()
         target_context="external target ${BASE_URL}; repo ${target_context}"
     fi
     note="tool curl; expected ${expected_status}; ${target_context}"
-    echo "| ${label} | ${MODE} | ${CONCURRENCY} | ${REQUESTS} requests | ${qps:-unknown} | ${average:-unknown} | ${p95:-unknown} | ${p99:-unknown} | ${error_rate} | ${note} |"
+    echo "| ${label} | ${RESULT_MODE} | ${CONCURRENCY} | ${REQUESTS} requests | ${qps:-unknown} | ${average:-unknown} | ${p95:-unknown} | ${p99:-unknown} | ${error_rate} | ${note} |"
 }
 
 run_scenario()
@@ -577,6 +609,7 @@ fi
 cat <<EOF
 Benchmark configuration:
 - mode: ${MODE}
+- kafka mode: ${KAFKA_MODE}
 - scenario: ${SCENARIO}
 - requests: ${REQUESTS}
 - concurrency: ${CONCURRENCY}

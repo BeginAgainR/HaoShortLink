@@ -36,6 +36,8 @@ RUN apt-get update \
         libmysqlclient-dev \
         libmysqlcppconn-dev \
         libhiredis-dev \
+        librdkafka-dev \
+        nlohmann-json3-dev \
     && cp -R /opt/muduo/include/muduo /usr/local/include/muduo \
     && cp /opt/muduo/lib/libmuduo_*.a /usr/local/lib/ \
     && rm -rf /var/lib/apt/lists/*
@@ -49,10 +51,13 @@ COPY apps ./apps
 RUN cmake -S /src -B /tmp/haoHTTP-build \
         -DCMAKE_BUILD_TYPE=Release \
         -DBUILD_TESTING=OFF \
-    && cmake --build /tmp/haoHTTP-build --target shortlink_server -j"$(nproc)" \
+    && cmake --build /tmp/haoHTTP-build --target shortlink_server shortlink_event_consumer -j"$(nproc)" \
     && install -Dm755 /tmp/haoHTTP-build/shortlink_server /opt/hao-shortlink/shortlink_server \
+    && install -Dm755 /tmp/haoHTTP-build/shortlink_event_consumer /opt/hao-shortlink/shortlink_event_consumer \
     && mkdir -p /opt/hao-shortlink/apps/shortlink_server \
-    && cp -R /src/apps/shortlink_server/config /opt/hao-shortlink/apps/shortlink_server/config
+    && cp -R /src/apps/shortlink_server/config /opt/hao-shortlink/apps/shortlink_server/config \
+    && mkdir -p /opt/hao-shortlink/apps/shortlink_event_consumer \
+    && cp -R /src/apps/shortlink_event_consumer/config /opt/hao-shortlink/apps/shortlink_event_consumer/config
 
 FROM ${BASE_IMAGE} AS runtime
 
@@ -66,6 +71,7 @@ RUN apt-get update \
         libmysqlclient21 \
         libmysqlcppconn7v5 \
         libhiredis0.14 \
+        librdkafka1 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /opt/hao-shortlink

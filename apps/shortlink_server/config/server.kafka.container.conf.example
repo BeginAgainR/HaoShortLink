@@ -1,4 +1,4 @@
-# HaoShortLink local configuration for the shortlink_server Compose container.
+# HaoShortLink configuration for the Kafka Compose overlay.
 # Format: key=value
 
 server.name=HaoShortLink
@@ -7,8 +7,6 @@ server.thread_num=4
 log.level=INFO
 metrics.enabled=true
 
-# This file is intended for shortlink_server running inside the same
-# Docker Compose network as MySQL and Redis.
 storage.type=mysql
 mysql.host=tcp://mysql:3306
 mysql.user=hao_shortlink
@@ -16,7 +14,6 @@ mysql.password=hao_shortlink
 mysql.database=hao_shortlink
 mysql.pool_size=4
 
-# Redis is an optional query cache for storage.type=mysql.
 redis.enabled=true
 redis.host=redis
 redis.port=6379
@@ -24,16 +21,13 @@ redis.database=0
 redis.ttl_seconds=3600
 redis.key_prefix=shortlink:
 
-# Redis-backed global fixed-window limit for POST /api/short-links.
-# This switch is independent of redis.enabled query caching.
 rate_limit.enabled=false
 rate_limit.requests=100
 rate_limit.window_seconds=60
 rate_limit.key_prefix=rate-limit:create:
 
-# Optional fail-open Kafka access events for GET /s/:code.
-# kafka:29092 is the internal Docker Compose listener.
-kafka.enabled=false
+# Kafka remains fail-open: it is not part of liveness or readiness.
+kafka.enabled=true
 kafka.bootstrap_servers=kafka:29092
 kafka.topic=hao-shortlink.access-events.v1
 kafka.client_id=hao-shortlink-server-container

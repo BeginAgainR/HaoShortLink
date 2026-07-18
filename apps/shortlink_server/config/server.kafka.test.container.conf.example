@@ -1,0 +1,21 @@
+# Memory-mode shortlink_server used by the Kafka broker recovery test.
+# Format: key=value
+
+server.name=HaoShortLinkKafkaRecovery
+server.port=8080
+server.thread_num=2
+log.level=INFO
+metrics.enabled=true
+
+storage.type=memory
+redis.enabled=false
+rate_limit.enabled=false
+
+kafka.enabled=true
+kafka.bootstrap_servers=kafka:29092
+kafka.topic=hao-shortlink.access-events.v1
+kafka.client_id=hao-shortlink-kafka-recovery
+kafka.queue_max_messages=100
+kafka.message_timeout_ms=1000
+kafka.linger_ms=5
+kafka.shutdown_timeout_ms=1000

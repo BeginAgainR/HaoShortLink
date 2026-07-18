@@ -3,7 +3,10 @@
 #include "middleware/MiddlewareChain.h"
 #include "metrics/HttpMetrics.h"
 #include "router/Router.h"
+#include "shortlink/AccessEvent.h"
+#include "shortlink/AccessEventPublisher.h"
 #include "shortlink/MemoryShortLinkRepository.h"
+#include "shortlink/RedirectHandler.h"
 #include "shortlink/ShortLinkService.h"
 #include "shortlink/ShortLinkMetrics.h"
 #include "utils/RequestId.h"
@@ -208,6 +211,156 @@ void testRequestIdConcurrentGeneration()
            "concurrent request ID generation should not produce duplicates");
 }
 
+void testAccessEventRoundTrip()
+{
+    const std::vector<std::pair<shortlink::AccessEventResult, int>> cases {
+        { shortlink::AccessEventResult::Success, 302 },
+        { shortlink::AccessEventResult::NotFound, 404 },
+        { shortlink::AccessEventResult::Disabled, 404 },
+        { shortlink::AccessEventResult::Expired, 404 },
+        { shortlink::AccessEventResult::Error, 500 }
+    };
+
+    for (const auto& item : cases)
+    {
+        const shortlink::AccessEvent event {
+            shortlink::generateAccessEventId(),
+            shortlink::nowEpochMilliseconds(),
+            "access-event-test-request",
+            "code-\"escaped",
+            item.first,
+            item.second
+        };
+        const std::string payload = shortlink::serializeAccessEvent(event);
+        const std::optional<shortlink::AccessEvent> parsed = shortlink::parseAccessEvent(payload);
+
+        expect(parsed.has_value(), "serialized access event should parse");
+        expect(parsed->eventId == event.eventId, "access event ID should round trip");
+        expect(parsed->occurredAtMs == event.occurredAtMs,
+               "access event timestamp should round trip");
+        expect(parsed->requestId == event.requestId, "access event request ID should round trip");
+        expect(event.eventId != event.requestId,
+               "access event ID should be independent from request ID");
+        expect(parsed->code == event.code, "access event code should round trip with escaping");
+        expect(parsed->result == event.result, "access event result should round trip");
+        expect(parsed->httpStatus == event.httpStatus, "access event HTTP status should round trip");
+        expect(payload.find("original_url") == std::string::npos,
+               "access event should not contain original URL");
+        expect(payload.find("user_agent") == std::string::npos,
+               "access event should not contain User-Agent");
+    }
+}
+
+void testAccessEventRejectsInvalidPayloads()
+{
+    const std::string validId = shortlink::generateAccessEventId();
+    const std::string base =
+        "{\"schema_version\":1,\"event_type\":\"short_link_access\",\"event_id\":\"" +
+        validId +
+        "\",\"occurred_at_ms\":1784304000123,\"request_id\":\"request-01\"," +
+        "\"code\":\"000001\",\"result\":\"success\",\"http_status\":302}";
+    expect(shortlink::parseAccessEvent(base).has_value(), "valid access event fixture should parse");
+
+    std::string forwardCompatible = base;
+    forwardCompatible.insert(forwardCompatible.size() - 1, ",\"future_field\":\"ignored\"");
+    expect(shortlink::parseAccessEvent(forwardCompatible).has_value(),
+           "unknown optional fields should remain forward compatible");
+
+    expect(!shortlink::parseAccessEvent("not-json").has_value(),
+           "invalid JSON access event should be rejected");
+    expect(!shortlink::parseAccessEvent(
+                "{\"schema_version\":2,\"event_type\":\"short_link_access\"}")
+                .has_value(),
+           "unsupported access event schema should be rejected");
+
+    std::string missingRequestId = base;
+    const std::string requestField = "\"request_id\":\"request-01\",";
+    missingRequestId.erase(missingRequestId.find(requestField), requestField.size());
+    expect(!shortlink::parseAccessEvent(missingRequestId).has_value(),
+           "missing required access event fields should be rejected");
+
+    std::string wrongResult = base;
+    wrongResult.replace(wrongResult.find("success"), 7, "unknown");
+    expect(!shortlink::parseAccessEvent(wrongResult).has_value(),
+           "unknown access event result should be rejected");
+
+    std::string wrongStatus = base;
+    wrongStatus.replace(wrongStatus.rfind("302"), 3, "404");
+    expect(!shortlink::parseAccessEvent(wrongStatus).has_value(),
+           "result and HTTP status mismatch should be rejected");
+}
+
+void testAccessEventIdGeneration()
+{
+    constexpr int threadCount = 8;
+    constexpr int idsPerThread = 1000;
+    std::unordered_set<std::string> ids;
+    std::mutex idsMutex;
+    std::vector<std::thread> threads;
+
+    for (int i = 0; i < threadCount; ++i)
+    {
+        threads.emplace_back([&ids, &idsMutex]() {
+            for (int j = 0; j < idsPerThread; ++j)
+            {
+                const std::string eventId = shortlink::generateAccessEventId();
+                std::lock_guard<std::mutex> lock(idsMutex);
+                ids.insert(eventId);
+            }
+        });
+    }
+
+    for (std::thread& thread : threads)
+    {
+        thread.join();
+    }
+    expect(ids.size() == static_cast<std::size_t>(threadCount * idsPerThread),
+           "concurrent event ID generation should not produce duplicates");
+    for (const std::string& eventId : ids)
+    {
+        expect(eventId.size() == 32, "generated event ID should contain 32 characters");
+        for (const unsigned char ch : eventId)
+        {
+            expect(std::isdigit(ch) || (ch >= 'a' && ch <= 'f'),
+                   "generated event ID should use lowercase hexadecimal characters");
+        }
+    }
+}
+
+class RecordingAccessEventPublisher : public shortlink::AccessEventPublisher
+{
+public:
+    void publish(const shortlink::AccessEvent& event) noexcept override
+    {
+        lastEvent = event;
+        ++publishCalls;
+    }
+
+    shortlink::AccessEvent lastEvent;
+    int publishCalls { 0 };
+};
+
+void testAccessEventPublisherAbstraction()
+{
+    const shortlink::AccessEvent event {
+        shortlink::generateAccessEventId(),
+        shortlink::nowEpochMilliseconds(),
+        "publisher-test-request",
+        "000001",
+        shortlink::AccessEventResult::Success,
+        302
+    };
+
+    RecordingAccessEventPublisher recording;
+    recording.publish(event);
+    expect(recording.publishCalls == 1, "publisher abstraction should receive access event");
+    expect(recording.lastEvent.eventId == event.eventId,
+           "publisher abstraction should preserve access event");
+
+    shortlink::NoopAccessEventPublisher noop;
+    noop.publish(event);
+}
+
 void testHttpMetricsPrometheusRendering()
 {
     http::metrics::HttpMetrics metrics;
@@ -288,6 +441,13 @@ void testShortLinkMetricsPrometheusRendering()
     metrics.recordBackendError(shortlink::ShortLinkMetrics::Backend::Mysql,
                                shortlink::ShortLinkMetrics::BackendOperation::Update);
     metrics.recordRateLimit(shortlink::ShortLinkMetrics::RateLimitResult::Limited);
+    metrics.recordAccessEventEnqueue(
+        shortlink::ShortLinkMetrics::AccessEventEnqueueResult::Accepted);
+    metrics.recordAccessEventEnqueue(
+        shortlink::ShortLinkMetrics::AccessEventEnqueueResult::QueueFull);
+    metrics.recordAccessEventDelivery(
+        shortlink::ShortLinkMetrics::AccessEventDeliveryResult::Failure);
+    metrics.setAccessEventQueueSize(7);
 
     const std::string rendered = metrics.renderPrometheus();
     expect(rendered.find("haohttp_shortlink_create_total{result=\"success\",storage=\"memory\"} 1") !=
@@ -308,6 +468,17 @@ void testShortLinkMetricsPrometheusRendering()
     expect(rendered.find("haohttp_shortlink_rate_limit_checks_total{result=\"limited\"} 1") !=
                std::string::npos,
            "short link metrics should count limited creates");
+    expect(rendered.find("haohttp_shortlink_access_event_enqueue_total{result=\"accepted\"} 1") !=
+               std::string::npos,
+           "short link metrics should count accepted access events");
+    expect(rendered.find("haohttp_shortlink_access_event_enqueue_total{result=\"queue_full\"} 1") !=
+               std::string::npos,
+           "short link metrics should count full Kafka producer queues");
+    expect(rendered.find("haohttp_shortlink_access_event_delivery_total{result=\"failure\"} 1") !=
+               std::string::npos,
+           "short link metrics should count Kafka delivery failures");
+    expect(rendered.find("haohttp_shortlink_access_event_queue_size 7") != std::string::npos,
+           "short link metrics should expose the Kafka producer queue size");
 }
 
 void testShortLinkMetricsConcurrentUpdates()
@@ -497,6 +668,38 @@ public:
         return std::nullopt;
     }
 };
+
+void testRedirectHandlerPublishesErrorAndRethrows()
+{
+    FailingLookupRepository repository;
+    shortlink::ShortLinkService service(repository);
+    RecordingAccessEventPublisher publisher;
+    http::HttpRequest request = makeRequest(http::HttpRequest::kGet, "/s/failing");
+    request.setPathParameters("param1", "failing");
+    request.setRequestId("redirect-error-request");
+    http::HttpResponse response(false);
+
+    bool threw = false;
+    try
+    {
+        shortlink::handleRedirect(request, &response, &service, &publisher);
+    }
+    catch (const std::runtime_error&)
+    {
+        threw = true;
+    }
+
+    expect(threw, "redirect handler should preserve the HTTP error boundary");
+    expect(publisher.publishCalls == 1, "redirect lookup failure should publish one event");
+    expect(publisher.lastEvent.result == shortlink::AccessEventResult::Error,
+           "redirect lookup failure should publish an error event");
+    expect(publisher.lastEvent.httpStatus == 500,
+           "redirect lookup failure event should describe the final HTTP status");
+    expect(publisher.lastEvent.requestId == "redirect-error-request",
+           "redirect error event should preserve the request ID");
+    expect(publisher.lastEvent.code == "failing",
+           "redirect error event should preserve the short code");
+}
 
 void testShortLinkServiceUrlValidation()
 {
@@ -691,6 +894,11 @@ int main()
         {"request header lookup is case insensitive", testRequestHeaderLookupIsCaseInsensitive},
         {"request ID validation and generation", testRequestIdValidationAndGeneration},
         {"request ID concurrent generation", testRequestIdConcurrentGeneration},
+        {"access event round trip", testAccessEventRoundTrip},
+        {"access event rejects invalid payloads", testAccessEventRejectsInvalidPayloads},
+        {"access event ID generation", testAccessEventIdGeneration},
+        {"access event publisher abstraction", testAccessEventPublisherAbstraction},
+        {"redirect handler publishes error and rethrows", testRedirectHandlerPublishesErrorAndRethrows},
         {"HTTP metrics Prometheus rendering", testHttpMetricsPrometheusRendering},
         {"HTTP metrics concurrent updates", testHttpMetricsConcurrentUpdates},
         {"short link metrics Prometheus rendering", testShortLinkMetricsPrometheusRendering},
