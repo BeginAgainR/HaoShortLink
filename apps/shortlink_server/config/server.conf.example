@@ -31,3 +31,14 @@ rate_limit.enabled=false
 rate_limit.requests=100
 rate_limit.window_seconds=60
 rate_limit.key_prefix=rate-limit:create:
+
+# Optional fail-open Kafka access events for GET /s/:code.
+# HTTP redirects never wait for Kafka delivery.
+kafka.enabled=false
+kafka.bootstrap_servers=127.0.0.1:19092
+kafka.topic=hao-shortlink.access-events.v1
+kafka.client_id=hao-shortlink-server-local
+kafka.queue_max_messages=10000
+kafka.message_timeout_ms=10000
+kafka.linger_ms=5
+kafka.shutdown_timeout_ms=3000

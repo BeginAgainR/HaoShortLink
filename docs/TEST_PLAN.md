@@ -1,7 +1,7 @@
 # 测试计划
 
-状态：持续维护；v1.7 生命周期本地全量回归和 GitHub Actions 云端 CI 已通过
-当前实现：已建立框架与业务基础测试、API 冒烟、MySQL / Redis 集成、Redis 不可用回退、异常场景、限流、健康语义、Compose 编排和监控冒烟入口；v1.7 已覆盖迁移、正常、禁用、过期、内部查询、缓存失效和旧格式陈旧缓存场景。
+状态：持续维护；v1.8 Kafka 访问事件本地全量回归和 GitHub Actions 云端 CI 已通过
+当前实现：已建立框架与业务基础测试、API 冒烟、MySQL / Redis 集成、Redis 不可用回退、异常场景、限流、健康语义、Compose 编排、监控冒烟和 Kafka 故障回归入口。
 
 ## v1.3 执行顺序
 
@@ -124,6 +124,53 @@ bash tests/scripts/rate_limit_nginx_test.sh
 - Nginx `/internal/` 返回 `404`，只绑定 localhost 的应用直连入口可以访问内部生命周期接口。
 - 独立目录 `/tmp/haoHTTP-v1.7-clean` 从 `HEAD` 干净克隆并应用当前 v1.7 diff 后，重新完成 Release 构建、CTest、API smoke 和 MySQL / Redis 生命周期集成；构建目录为 `/tmp/haoHTTP-v1.7-clean-build`。
 - v1.7 功能与文档提交 `1ce2312` 的 push run `29505767969` 已通过；`Linux build and tests` 与 `Prometheus and Grafana smoke` 两个 job 均成功。
+
+## v1.8 验证
+
+当前状态：单元、Linux VM、Ubuntu 22.04 容器构建、Kafka 完整集成、broker 恢复、三模式性能对照和
+GitHub Actions 独立 Kafka CI job 已通过。
+
+干净目录验证：
+
+- 源码目录：`/Users/hao/Code/haoHTTP-v18-clean`；VM 构建目录：`/tmp/haoHTTP-v18-clean-build`。
+- 从当前分支 `HEAD` 克隆后只同步 Git 跟踪文件和本轮新增源码，排除本地忽略文件。
+- Release 构建、CTest、API smoke、MySQL / Redis 生命周期与降级、限流、readiness、Kafka 完整集成、
+  broker 恢复、Kafka UI 和 Ubuntu 22.04 Docker 镜像构建均通过。
+
+### 事件模型与单元测试
+
+- 覆盖事件构造、JSON 编解码、独立 event ID、必填字段、枚举、转义和 schema 版本。
+- 覆盖 Noop / fake publisher，确认 Kafka disabled 不改变现有跳转结果。
+- 覆盖 producer 指标并发更新和低基数 label 组合。
+- 覆盖 repository 查询异常时 handler 发布 `error` 事件，并继续抛给既有 HTTP 500 边界。
+
+### Producer 与 HTTP 语义
+
+- success、not_found、disabled、expired 和 error 均产生符合契约的事件。
+- Kafka record key 使用短码，payload 不包含原始 URL、IP 或 User-Agent。
+- Kafka 启动前不可用、运行中停止和恢复时，跳转状态码、Location、liveness 和 readiness 保持原有语义。
+- producer 初始化失败、消息超时或队列满时采用 fail-open，请求线程不等待 broker RTT。
+- delivery callback、队列指标和有限时长 shutdown flush 可观察。
+
+### Consumer 与 offset
+
+- 独立 consumer 使用固定 consumer group 和手动 offset。
+- 有效事件处理后提交；非法或不支持事件记录 discard 后提交，避免永久阻塞 partition。
+- 覆盖 consumer 重启续读、重复消息、临时消费错误退避和有界关闭。
+- v1.8 不验证统计写入、业务幂等表、重试 topic 或 DLQ，这些进入 v1.9。
+
+### Compose、CI 与性能
+
+- Compose overlay 启动单节点 KRaft Kafka、显式 topic 初始化、consumer 和只绑定 localhost 的 Kafka UI。
+- Linux VM 验证 librdkafka、固定 Kafka 镜像、CMake、Docker 构建与运行依赖。
+- CI 使用独立 Kafka 集成入口，失败时保留 producer、consumer 和 broker 日志并清理临时资源。
+- 比较 Kafka 关闭、正常和故障三组 redirect 基线，记录 QPS、平均延迟、P95 / P99 和错误率。
+- v1.7 CTest、API smoke、MySQL / Redis 集成、限流、健康语义和监控冒烟继续通过。
+- 本地 Kafka wrapper 已覆盖 topic 的 partition / replication / retention 实际配置、success / not_found /
+  disabled / expired 运行时事件、record key、producer 初始化失败降级、consumer offset / restart / discard /
+  有界关闭、broker 停止与恢复、队列满、delivery failure、UI localhost 绑定与健康；`error` 异常映射由
+  应用层 handler 单元测试覆盖。
+- 完整 Compose、干净目录和 GitHub Actions run `29637356364` 已通过；云端三个 job 均成功。
 
 ## 测试分层
 

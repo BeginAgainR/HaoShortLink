@@ -1,18 +1,20 @@
 # 架构说明
 
 状态：已建立基础版，持续维护
-当前实现：框架层存在，短链接业务层已实现 V1 最小闭环、MySQL 持久化和可选 Redis 查询缓存
+当前实现：框架层之上已实现短链闭环、MySQL / Redis、生命周期、流量保护、可观测性和可选 Kafka 访问事件
 
 ## 分层
 
 ```text
 apps/shortlink_server/      短链接业务层
+apps/shortlink_event_consumer/ 独立访问事件消费者
 HttpServer/                 HTTP 框架层
 muduo                       网络库
 ```
 
 `HttpServer/` 是当前已有的框架层，负责 HTTP 请求解析、路由、中间件、响应构造等基础能力。
-`apps/shortlink_server/` 是业务应用层，当前承载短链接 API、业务逻辑、存储抽象、MySQL 存储实现和 Redis 查询缓存。
+`apps/shortlink_server/` 是业务应用层，承载短链接 API、业务逻辑、存储抽象、MySQL 存储、Redis 查询缓存和
+Kafka publisher。`apps/shortlink_event_consumer/` 是独立进程，只复用版本化事件 codec，不进入 HTTP 进程。
 
 当前框架层已补充：
 
@@ -48,11 +50,12 @@ POST /api/short-links
   -> JSON 201
 
 GET /s/{code}
-  -> redirect handler
+  -> RedirectHandler
   -> ShortLinkService
   -> ShortLinkRepository
   -> Memory / MySQL / Redis cache + MySQL
-  -> 302 Location
+  -> 302 / 404 / 500
+  -> AccessEventPublisher（Noop 或 librdkafka 异步 fail-open）
 ```
 
 当前本地工程化链路：
@@ -63,6 +66,8 @@ client
   -> shortlink_server
        -> MySQL（事实来源）
        -> Redis（可选查询缓存）
+       -> Kafka access-events（可选、非 readiness 依赖）
+            -> shortlink_event_consumer（校验、记录、手动 offset）
 ```
 
 ## 边界约定
@@ -70,13 +75,14 @@ client
 - 不重写整个框架。
 - 暂时不重命名 `HttpServer/`。
 - 业务代码应放在 `apps/shortlink_server/`。
+- Kafka 类型和访问事件逻辑不进入 `HttpServer/`、repository 或 `ShortLinkService`。
 - 框架增强应保持小步修改，并避免引入短链接业务耦合。
-- 部署、限流和进阶能力在明确任务前不提前接入。
+- MySQL 是事实来源；Redis 和 Kafka 都是可降级依赖，Kafka 故障不改变跳转与 readiness 语义。
+- v1.8 只建立事件管道，不写访问统计，不承诺端到端 exactly-once。
 
 ## 后续关注点
 
-- 请求日志、`request_id`、结构化业务日志和敏感字段边界。
-- 指标记录、线程安全、低基数标签和 `/metrics` 暴露范围。
-- liveness / readiness 以及 MySQL、Redis 故障对就绪状态的影响。
-- MySQL / Redis 集成测试接入远端 CI。
-- CORS、中间件执行顺序和 v1.6 限流能力继续按小步梳理。
+- v1.9 将访问事件写入统计模型，并补充 `event_id` 幂等、失败处理、lag 和受控重放。
+- v2.0 补用户、链接归属、权限和管理 API。
+- 只有出现可靠生命周期事件需求后才评估 Outbox；只有出现多语言消费者或频繁 schema 演进后才评估
+  Schema Registry、Avro 或 Protobuf。

@@ -114,6 +114,7 @@ v1.4 收口决策：
 - v1.7 先补链接状态、过期、详情 / 列表和缓存失效，再引入新的消息基础设施。
 - Kafka 访问事件顺延到 v1.8，访问统计和相关工程化收口进入 v1.9。
 - v2.0 聚焦用户、链接归属、权限、管理 API 和整体验收，不再一次承担链接生命周期与全部统计实现。
+- v2.1 只保留生命周期事件可靠发布和 schema 治理的条件候选，不作为 v2.0 前置条件。
 
 v1.5 可观测性字段、指标、标签基数、`/metrics` 暴露和验证边界记录在 `docs/OBSERVABILITY_DESIGN.md`。
 
@@ -282,20 +283,90 @@ shortlink:{code} -> original_url
 
 ### v1.8 消息队列优先级
 
-状态：暂定
+状态：已实现并完成本地故障验证与 GitHub Actions 云端 Kafka CI 验证
 
-v1.8 消息队列能力优先规划 Kafka：
+决策：
 
 ```text
-shortlink_server -> access-events topic -> stats consumer
+GET /s/{code}
+  -> shortlink_server
+  -> Kafka access-events topic
+  -> shortlink_event_consumer
 ```
 
-说明：
+- v1.8 使用 Kafka 承接短码跳转产生的访问事件；RabbitMQ 不作为第一批消息队列目标。
+- 事件覆盖 `success`、`not_found`、`disabled`、`expired` 和 `error`，使用版本化 JSON 和独立 `event_id`。
+- record key 使用短码，使同一短码事件进入同一 partition；第一版不包含原始 URL、IP、User-Agent 或 Referer。
+- publisher 位于应用 handler 边界，不进入 `ShortLinkService`、repository 或 `HttpServer/`。
+- 使用 librdkafka 非阻塞 producer、有界队列、独立 poll、delivery callback、idempotent producer 和有界退出 flush。
+- Kafka 故障采用 fail-open，不改变跳转 HTTP 结果，也不影响 liveness / readiness。
+- 使用独立消费者进程、consumer group 和手动 offset；连续三次提交失败后退出，避免后续提交跨过失败消息；
+  v1.8 消费者只校验并记录事件，不写统计。
+- 本地编排使用单节点 KRaft Kafka、显式 topic 初始化、固定镜像和只绑定 localhost 的 Kafka UI。
+- v1.8 接受有明确观测的事件丢失和重复，不承诺端到端 exactly-once。
+
+理由：
 
 - 短链接跳转天然会产生访问事件，适合使用事件流承接访问统计、审计和后续异步处理。
 - Kafka 更贴合访问事件流、日志流和大规模消费者扩展场景。
-- RabbitMQ 仍作为后续任务队列、复杂路由或可靠任务分发场景的候选，但不作为第一批消息队列目标。
-- 消息队列接入不能改变短码跳转主路径语义；Kafka 不可用时需要明确降级策略。
+- 访问统计允许第一阶段采用 best-effort 事件，而跳转可用性和延迟不能依赖 Kafka。
+- 独立 consumer 能保持 HTTP 进程职责清晰，并为 v1.9 统计副作用提供自然扩展点。
+- 版本化 JSON 足以覆盖单生产者和单消费者，暂不需要 Schema Registry。
+- 单节点编排足以验证 topic、partition、offset、consumer group、重放和故障降级，不声明生产高可用。
+
+详细设计：`docs/ACCESS_EVENT_DESIGN.md`。
+
+### v1.8 服务优雅退出与框架生命周期修复
+
+状态：已修复并完成本地验证
+
+决策：
+
+- 服务进程阻塞 `SIGINT` / `SIGTERM`，由专用等待线程通知主 `EventLoop` 退出，再执行 producer 有界 flush。
+- `HttpServer` 中 `EventLoop` 必须先于持有其指针的 `TcpServer` 构造，并晚于后者析构。
+- 只调整成员声明顺序，不向 `HttpServer/` 引入 Kafka 类型、配置或业务逻辑。
+
+理由：
+
+- 初次加入优雅退出后，Kafka disabled 的容器收到 `SIGTERM` 仍以 `139` 退出，证明问题不依赖 Kafka。
+- 原成员顺序会让 `TcpServer` 先构造、`EventLoop` 后构造，并在析构时先销毁 `EventLoop`，其持有关系存在未定义行为。
+- 调整后同一信号探针以 `0` 退出并记录 `event=server_shutdown`，Kafka producer 的有界 flush 才有可靠生命周期边界。
+
+### v1.9 消费幂等、失败处理与重放
+
+状态：已确认方向，尚未实现
+
+决策：
+
+- v1.9 才将访问事件写入 MySQL 统计模型，v1.8 不提前制造无业务副作用的幂等表和 DLQ。
+- 使用独立 `event_id`、MySQL 唯一约束和事务，使重复事件不会重复增加统计。
+- 统计事务成功后再提交 Kafka offset；MySQL 临时错误不提交 offset，并执行有界退避重试。
+- 永久非法或不兼容事件进入 DLQ，避免 poison message 永久阻塞 partition。
+- 增加 consumer lag、处理成功 / 失败、重复、重试和 DLQ 观测。
+- 使用新 consumer group 或受控 offset 重置验证事件重放和统计重建。
+
+理由：
+
+- 只有统计写入产生真实 MySQL 副作用后，消费幂等、重试和 DLQ 才有可验证的业务语义。
+- `Kafka -> MySQL` 链路不能仅靠 Kafka producer 事务获得端到端 exactly-once；业务唯一约束更直接。
+- 重放和统计重建能证明 Kafka 相比一次性任务队列的业务价值。
+
+### v2.1 生命周期事件 Outbox 与 schema 治理候选
+
+状态：条件候选
+
+决策：
+
+- 如果 v2.0 后需要让其他系统可靠感知链接创建、禁用、恢复、过期时间或归属变更，评估 Transactional Outbox。
+- Outbox 只用于本来就写 MySQL 的生命周期操作；访问事件来自读路径，不为每次跳转增加同步 Outbox 写入。
+- 只有出现多个跨语言消费者或频繁 schema 演进后，才评估 Schema Registry、Avro 或 Protobuf。
+- 本候选不属于 v2.0 验收条件，启动前必须重新确认真实消费者和可靠性需求。
+
+理由：
+
+- 生命周期更新可以在同一 MySQL 事务中原子写业务表和 outbox，适合可靠发布。
+- 在访问读路径增加 outbox 会重新引入每次跳转的同步数据库写入，削弱 Kafka 解耦价值。
+- 单生产者、单消费者阶段使用 `schema_version` 已足够，不为简历展示提前堆叠治理组件。
 
 ### v1.6 限流与健康语义
 

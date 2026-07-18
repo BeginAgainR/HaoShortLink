@@ -1,6 +1,8 @@
 add_executable(hao_shortlink_tests
     minimal_test.cpp
+    ${PROJECT_SOURCE_DIR}/apps/shortlink_server/src/AccessEvent.cpp
     ${PROJECT_SOURCE_DIR}/apps/shortlink_server/src/MemoryShortLinkRepository.cpp
+    ${PROJECT_SOURCE_DIR}/apps/shortlink_server/src/RedirectHandler.cpp
     ${PROJECT_SOURCE_DIR}/apps/shortlink_server/src/ShortLinkService.cpp
     ${PROJECT_SOURCE_DIR}/apps/shortlink_server/src/ShortLinkMetrics.cpp
     ${PROJECT_SOURCE_DIR}/apps/shortlink_server/src/ShortLinkRepository.cpp
@@ -16,6 +18,7 @@ target_link_libraries(hao_shortlink_tests
     pthread
     muduo_net
     muduo_base
+    nlohmann_json::nlohmann_json
 )
 
 add_test(NAME hao_shortlink_tests COMMAND hao_shortlink_tests)

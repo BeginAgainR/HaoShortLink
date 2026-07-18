@@ -40,6 +40,8 @@ jobs:
             libmysqlclient-dev \
             libmysqlcppconn-dev \
             libhiredis-dev \
+            librdkafka-dev \
+            nlohmann-json3-dev \
             default-mysql-client \
             redis-tools
 
@@ -117,3 +119,64 @@ jobs:
       - name: Stop monitoring containers
         if: always()
         run: docker compose down --volumes --remove-orphans
+
+  kafka-integration:
+    name: Kafka integration
+    runs-on: ubuntu-22.04
+    timeout-minutes: 35
+
+    env:
+      BUILD_DIR: /tmp/haoHTTP-build
+      MUDUO_TARBALL_URL: https://github.com/chenshuo/muduo/archive/f1fc77e0c13b80e5086ff457362c8a86d1b609d4.tar.gz
+      SHORTLINK_KAFKA_IMAGE: apache/kafka:4.3.1
+      SHORTLINK_KAFKA_UI_IMAGE: ghcr.io/kafbat/kafka-ui:v1.5.0
+      SHORTLINK_KAFKA_EXTERNAL_HOST: 127.0.0.1
+      HAOHTTP_KCAT_BIN: kafkacat
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ca-certificates \
+            curl \
+            cmake \
+            build-essential \
+            libboost-dev \
+            libssl-dev \
+            libmysqlclient-dev \
+            libmysqlcppconn-dev \
+            libhiredis-dev \
+            librdkafka-dev \
+            nlohmann-json3-dev \
+            kafkacat
+
+      - name: Build and install muduo core libraries
+        run: |
+          curl -fsSL --retry 3 --retry-delay 2 -o /tmp/muduo.tar.gz "${MUDUO_TARBALL_URL}"
+          mkdir -p /tmp/muduo-src
+          tar -xzf /tmp/muduo.tar.gz -C /tmp/muduo-src --strip-components=1
+          cmake -S /tmp/muduo-src -B /tmp/muduo-build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DMUDUO_BUILD_EXAMPLES=OFF \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+          cmake --build /tmp/muduo-build --target muduo_base muduo_net -j"$(nproc)"
+          sudo mkdir -p /usr/local/include/muduo /usr/local/lib
+          sudo cp /tmp/muduo-build/lib/libmuduo_base.a /tmp/muduo-build/lib/libmuduo_net.a /usr/local/lib/
+          sudo cp -R /tmp/muduo-src/muduo/. /usr/local/include/muduo/
+          sudo ldconfig
+
+      - name: Build server and consumer
+        run: |
+          cmake -S . -B "${BUILD_DIR}" -DCMAKE_BUILD_TYPE=Release
+          cmake --build "${BUILD_DIR}" -j"$(nproc)"
+
+      - name: Run Kafka integration and broker recovery tests
+        run: bash tests/scripts/run_kafka_integration_with_compose.sh
+
+      - name: Stop Kafka test resources
+        if: always()
+        run: docker compose -f compose.yaml -f compose.kafka.yaml down --volumes --remove-orphans

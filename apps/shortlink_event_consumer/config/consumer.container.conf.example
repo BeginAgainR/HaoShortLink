@@ -1,0 +1,10 @@
+# Access event consumer configuration for the Kafka Compose overlay.
+# Format: key=value
+
+consumer.bootstrap_servers=kafka:29092
+consumer.topic=hao-shortlink.access-events.v1
+consumer.group_id=hao-shortlink-access-event-logger-v1
+consumer.client_id=hao-shortlink-event-consumer-container
+consumer.auto_offset_reset=earliest
+consumer.poll_timeout_ms=500
+consumer.session_timeout_ms=10000

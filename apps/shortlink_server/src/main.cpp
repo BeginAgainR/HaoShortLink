@@ -1,10 +1,13 @@
 #include "http/HttpServer.h"
+#include "shortlink/AccessEventPublisher.h"
+#include "shortlink/KafkaAccessEventPublisher.h"
 #include "shortlink/MemoryShortLinkRepository.h"
 #include "shortlink/MySqlShortLinkRepository.h"
 #include "shortlink/RateLimiter.h"
 #include "shortlink/RedisCachedShortLinkRepository.h"
 #include "shortlink/RedisFixedWindowRateLimiter.h"
 #include "shortlink/RedisShortLinkCache.h"
+#include "shortlink/RedirectHandler.h"
 #include "shortlink/ShortLinkService.h"
 #include "shortlink/ShortLinkMetrics.h"
 #include "utils/Config.h"
@@ -13,16 +16,20 @@
 
 #include <cctype>
 #include <chrono>
+#include <csignal>
 #include <cstdint>
+#include <exception>
 #include <iostream>
 #include <limits>
 #include <memory>
 #include <optional>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
 #include <muduo/base/Logging.h>
+#include <pthread.h>
 
 namespace
 {
@@ -49,6 +56,14 @@ struct ServerConfig
     int rateLimitRequests = 100;
     int rateLimitWindowSeconds = 60;
     std::string rateLimitKeyPrefix = "rate-limit:create:";
+    bool kafkaEnabled = false;
+    std::string kafkaBootstrapServers = "127.0.0.1:9092";
+    std::string kafkaTopic = "hao-shortlink.access-events.v1";
+    std::string kafkaClientId = "hao-shortlink-server";
+    int kafkaQueueMaxMessages = 10000;
+    int kafkaMessageTimeoutMs = 10000;
+    int kafkaLingerMs = 5;
+    int kafkaShutdownTimeoutMs = 3000;
 };
 
 ServerConfig loadServerConfig(const std::string& configPath)
@@ -87,6 +102,19 @@ ServerConfig loadServerConfig(const std::string& configPath)
             config.getInt("rate_limit.window_seconds", serverConfig.rateLimitWindowSeconds);
         serverConfig.rateLimitKeyPrefix =
             config.getString("rate_limit.key_prefix", serverConfig.rateLimitKeyPrefix);
+        serverConfig.kafkaEnabled = config.getBool("kafka.enabled", serverConfig.kafkaEnabled);
+        serverConfig.kafkaBootstrapServers =
+            config.getString("kafka.bootstrap_servers", serverConfig.kafkaBootstrapServers);
+        serverConfig.kafkaTopic = config.getString("kafka.topic", serverConfig.kafkaTopic);
+        serverConfig.kafkaClientId = config.getString("kafka.client_id", serverConfig.kafkaClientId);
+        serverConfig.kafkaQueueMaxMessages =
+            config.getInt("kafka.queue_max_messages", serverConfig.kafkaQueueMaxMessages);
+        serverConfig.kafkaMessageTimeoutMs =
+            config.getInt("kafka.message_timeout_ms", serverConfig.kafkaMessageTimeoutMs);
+        serverConfig.kafkaLingerMs =
+            config.getInt("kafka.linger_ms", serverConfig.kafkaLingerMs);
+        serverConfig.kafkaShutdownTimeoutMs =
+            config.getInt("kafka.shutdown_timeout_ms", serverConfig.kafkaShutdownTimeoutMs);
     }
 
     if (serverConfig.port <= 0 || serverConfig.port > 65535)
@@ -156,6 +184,22 @@ ServerConfig loadServerConfig(const std::string& configPath)
         std::cerr << "rate_limit.key_prefix must differ from redis.key_prefix. "
                   << "Disabling rate limiting." << std::endl;
         serverConfig.rateLimitEnabled = false;
+    }
+
+    if (serverConfig.kafkaBootstrapServers.empty() || serverConfig.kafkaTopic.empty() ||
+        serverConfig.kafkaClientId.empty())
+    {
+        std::cerr << "Kafka bootstrap servers, topic and client ID must not be empty. "
+                  << "Disabling Kafka access events." << std::endl;
+        serverConfig.kafkaEnabled = false;
+    }
+
+    if (serverConfig.kafkaQueueMaxMessages <= 0 || serverConfig.kafkaMessageTimeoutMs <= 0 ||
+        serverConfig.kafkaLingerMs < 0 || serverConfig.kafkaShutdownTimeoutMs < 0)
+    {
+        std::cerr << "Invalid Kafka queue or timeout configuration. "
+                  << "Disabling Kafka access events." << std::endl;
+        serverConfig.kafkaEnabled = false;
     }
 
     return serverConfig;
@@ -585,23 +629,6 @@ void handleCreateShortLink(const http::HttpRequest& req,
     metrics->recordCreate(shortlink::ShortLinkMetrics::CreateResult::Success, storage);
 }
 
-void handleRedirect(const http::HttpRequest& req,
-                    http::HttpResponse* resp,
-                    shortlink::ShortLinkService* service)
-{
-    const std::string code = req.getPathParameters("param1");
-    const shortlink::ShortLinkService::RedirectResult result = service->resolve(code);
-    if (result.status != shortlink::ShortLinkService::RedirectStatus::Success)
-    {
-        resp->setErrorResponse(http::HttpResponse::k404NotFound,
-                               "short_link_not_found",
-                               "Short link not found");
-        return;
-    }
-
-    resp->setRedirect(*result.originalUrl);
-}
-
 void handleInternalDetail(const http::HttpRequest& req,
                           http::HttpResponse* resp,
                           shortlink::ShortLinkService* service)
@@ -737,13 +764,22 @@ void handleMetrics(const http::HttpRequest& req,
 
 int main(int argc, char* argv[])
 {
+    sigset_t terminationSignals;
+    sigemptyset(&terminationSignals);
+    sigaddset(&terminationSignals, SIGINT);
+    sigaddset(&terminationSignals, SIGTERM);
+    if (pthread_sigmask(SIG_BLOCK, &terminationSignals, nullptr) != 0)
+    {
+        std::cerr << "Failed to block termination signals." << std::endl;
+        return 1;
+    }
+
     const std::string configPath = argc > 1 ? argv[1] : "apps/shortlink_server/config/server.conf.example";
     const ServerConfig config = loadServerConfig(configPath);
 
     LOG_INFO << "Starting " << config.name << " on port " << config.port
              << " with " << config.threadNum << " worker threads";
 
-    http::HttpServer server(config.port, config.name);
     shortlink::ShortLinkMetrics shortLinkMetrics;
     const shortlink::ShortLinkMetrics::Storage metricsStorage =
         config.storageType == "mysql"
@@ -752,6 +788,8 @@ int main(int argc, char* argv[])
     std::unique_ptr<shortlink::ShortLinkRepository> primaryShortLinkRepository;
     std::unique_ptr<shortlink::ShortLinkRepository> shortLinkRepository;
     std::unique_ptr<shortlink::RateLimiter> rateLimiter;
+    std::unique_ptr<shortlink::AccessEventPublisher> accessEventPublisher =
+        std::make_unique<shortlink::NoopAccessEventPublisher>();
     if (config.storageType == "mysql")
     {
         http::db::DbConnectionPool::getInstance().init(config.mysqlHost,
@@ -802,7 +840,31 @@ int main(int argc, char* argv[])
             std::move(rateLimitConfig));
     }
 
+    if (config.kafkaEnabled)
+    {
+        shortlink::KafkaAccessEventPublisher::Config kafkaConfig;
+        kafkaConfig.bootstrapServers = config.kafkaBootstrapServers;
+        kafkaConfig.topic = config.kafkaTopic;
+        kafkaConfig.clientId = config.kafkaClientId;
+        kafkaConfig.queueMaxMessages = config.kafkaQueueMaxMessages;
+        kafkaConfig.messageTimeoutMs = config.kafkaMessageTimeoutMs;
+        kafkaConfig.lingerMs = config.kafkaLingerMs;
+        kafkaConfig.shutdownTimeoutMs = config.kafkaShutdownTimeoutMs;
+        try
+        {
+            accessEventPublisher = std::make_unique<shortlink::KafkaAccessEventPublisher>(
+                std::move(kafkaConfig),
+                &shortLinkMetrics);
+        }
+        catch (const std::exception& error)
+        {
+            LOG_ERROR << "event=kafka_access_event_producer status=disabled fail_open=true"
+                      << " reason=" << error.what();
+        }
+    }
+
     shortlink::ShortLinkService shortLinkService(*shortLinkRepository, &shortLinkMetrics);
+    http::HttpServer server(config.port, config.name);
 
     server.setThreadNum(config.threadNum);
     server.Get("/api/health", handleHealth);
@@ -826,8 +888,10 @@ int main(int argc, char* argv[])
     });
     server.addRoute(http::HttpRequest::kGet,
                     "/s/:code",
-                    [&shortLinkService](const http::HttpRequest& req, http::HttpResponse* resp) {
-                        handleRedirect(req, resp, &shortLinkService);
+                    [&shortLinkService,
+                     publisher = accessEventPublisher.get()](const http::HttpRequest& req,
+                                                              http::HttpResponse* resp) {
+                        shortlink::handleRedirect(req, resp, &shortLinkService, publisher);
                     });
     server.Get("/internal/short-links", [&shortLinkService](const http::HttpRequest& req,
                                                             http::HttpResponse* resp) {
@@ -850,5 +914,15 @@ int main(int argc, char* argv[])
             handleMetrics(req, resp, &server, &shortLinkMetrics);
         });
     }
+    std::thread shutdownThread([&server, &terminationSignals]() {
+        int signal = 0;
+        if (sigwait(&terminationSignals, &signal) == 0)
+        {
+            LOG_INFO << "event=server_shutdown signal=" << signal;
+            server.getLoop()->quit();
+        }
+    });
+
     server.start();
+    shutdownThread.join();
 }

@@ -1260,6 +1260,79 @@ HTTP/1.1 200 OK
 - 生产化部署应只对外暴露 Nginx 的 80/443，`shortlink_server`、MySQL 和 Redis 应仅在内部网络可见。
 - HTTPS/TLS 终止后续由 Nginx 配置承接，当前尚未实现。
 
+## v1.8 Kafka 访问事件
+
+Kafka 通过独立 overlay 启用，默认 Compose 不启动消息组件。当前固定使用
+`apache/kafka:4.3.1` 和 `ghcr.io/kafbat/kafka-ui:v1.5.0`。
+
+### 启动完整本地环境
+
+```bash
+docker compose -f compose.yaml -f compose.kafka.yaml up -d --build
+```
+
+关键入口：
+
+- 应用直连：`http://127.0.0.1:18080`
+- Kafka 外部 listener：`127.0.0.1:19092`；OrbStack VM 使用 `docker.orb.internal:19092`
+- Kafka UI：`http://127.0.0.1:18081`，只绑定 localhost
+- topic：`hao-shortlink.access-events.v1`，3 partitions、replication factor 1、保留 7 天
+
+查看状态和日志：
+
+```bash
+docker compose -f compose.yaml -f compose.kafka.yaml ps
+docker compose -f compose.yaml -f compose.kafka.yaml logs -f shortlink_server shortlink_event_consumer kafka
+docker exec hao-shortlink-kafka /opt/kafka/bin/kafka-topics.sh \
+  --bootstrap-server kafka:29092 \
+  --describe \
+  --topic hao-shortlink.access-events.v1
+```
+
+手工运行 VM producer / consumer 时分别使用：
+
+```text
+apps/shortlink_server/config/server.kafka.conf.example
+apps/shortlink_event_consumer/config/consumer.conf.example
+```
+
+容器配置使用 Compose 内部地址 `kafka:29092`。消费者关闭自动 offset 提交；有效事件记录后提交，非法事件
+记录 discard 后提交；连续三次提交失败会退出，由进程管理器重启，避免继续消费后跨过失败 offset。
+v1.8 消费者不写统计表。
+
+### 指标与故障语义
+
+producer 指标：
+
+```text
+haohttp_shortlink_access_event_enqueue_total{result="accepted|queue_full|error"}
+haohttp_shortlink_access_event_delivery_total{result="success|failure"}
+haohttp_shortlink_access_event_queue_size
+```
+
+Kafka 初始化失败、broker 中断、消息超时或本地队列满都采用 fail-open：跳转结果和 liveness / readiness
+不依赖 Kafka。broker 恢复后 librdkafka 自动重连；进程收到 `SIGINT` / `SIGTERM` 时只在配置的
+`kafka.shutdown_timeout_ms` 内 flush，超时后清理剩余消息并退出。
+
+### 集成验证
+
+Linux VM 已构建 `/tmp/haoHTTP-build` 后，从 Mac Docker 环境执行：
+
+```bash
+HAOHTTP_TEST_HOST=haoHTTP@orb \
+bash tests/scripts/run_kafka_integration_with_compose.sh
+```
+
+入口会构建 Ubuntu 22.04 兼容镜像，启动 Kafka、验证 topic 的 partition / replication / retention 实际配置和
+Kafka UI localhost 绑定，并覆盖 producer delivery / 初始化失败降级、四种可直接构造的跳转结果、consumer
+手动 offset / restart / discard / 有界关闭、broker 中断恢复、队列满和 producer 有界 shutdown。内部错误到
+`error` 事件的映射由 CTest 中的应用层 handler 测试覆盖。
+脚本结束后删除测试容器，但保留 Kafka 数据卷。完整停止日常环境：
+
+```bash
+docker compose -f compose.yaml -f compose.kafka.yaml down
+```
+
 ## 当前文档任务验证
 
 文档任务不需要运行构建命令。验证重点是：

@@ -1,7 +1,7 @@
 # 压测计划
 
-状态：v1.4 基线已完成，v1.5 和 v1.6 已执行代表性回归
-当前实现：已完成 curl fallback 与 `hey` 多模式基线、MySQL 创建路径修复、异常场景覆盖、Redis 环境问题定性、Nginx 入口底线验证、v1.4.7 全量回归和 v1.5 / v1.6 代表性性能回归
+状态：v1.4 基线已完成，v1.5、v1.6 和 v1.8 已执行代表性回归
+当前实现：已完成 curl fallback 与 `hey` 多模式基线、MySQL 创建路径修复、异常场景覆盖、Redis 环境问题定性、Nginx 入口底线验证、v1.4.7 全量回归、v1.5 / v1.6 代表性回归和 v1.8 Kafka 三模式对照
 
 ## 说明
 
@@ -746,6 +746,55 @@ v1.4.3 修复后复测：
 3. v1.4.5 已将 Redis 固定延迟定性为本地 VM 到 Docker 发布端口的地址路径问题，并验证 IPv6 规避策略。
 4. v1.4.6 已完成 `hey` 核心小基线和 Nginx 入口底线验证，覆盖场景错误率均为 0.00%。
 5. v1.4.7 全量回归和版本收口已完成；`server.thread_num` / `mysql.pool_size` 参数矩阵后置到有新证据时再评估。
+
+## v1.8 Kafka 三模式对照
+
+本轮用于确认异步访问事件不会给跳转路径带来稳定可复现的回归，不声明生产承载上限。
+
+环境与参数：
+
+- OrbStack Linux VM `haoHTTP`，Release 构建目录 `/tmp/haoHTTP-build`。
+- 内存存储，预先创建同一个短链，场景为 `GET /s/{code}`。
+- 工具 `hey`，每轮 20000 请求，并发 16；每种 Kafka 模式执行 3 轮。
+- `disabled`：不创建 producer；`normal`：连接本地 Kafka；`failure`：连接不可用 broker，验证 fail-open。
+
+结果：
+
+| 轮次 | Kafka 模式 | QPS | 平均延迟 | P95 | P99 | 错误率 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| 1 | disabled | 53304.90 | 0.000290s | 0.0018s | 0.0029s | 0.00% |
+| 1 | normal | 59014.46 | 0.000256s | 0.0017s | 0.0026s | 0.00% |
+| 1 | failure | 59364.80 | 0.000259s | 0.0017s | 0.0028s | 0.00% |
+| 2 | disabled | 72020.17 | 0.000209s | 0.0013s | 0.0023s | 0.00% |
+| 2 | normal | 64703.98 | 0.000232s | 0.0016s | 0.0027s | 0.00% |
+| 2 | failure | 57290.17 | 0.000269s | 0.0017s | 0.0028s | 0.00% |
+| 3 | disabled | 55279.16 | 0.000276s | 0.0017s | 0.0029s | 0.00% |
+| 3 | normal | 64020.49 | 0.000237s | 0.0017s | 0.0029s | 0.00% |
+| 3 | failure | 58651.03 | 0.000263s | 0.0017s | 0.0027s | 0.00% |
+
+三轮中位数：
+
+| Kafka 模式 | QPS | 平均延迟 | P95 | P99 | 错误率 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| disabled | 55279.16 | 0.000276s | 0.0017s | 0.0029s | 0.00% |
+| normal | 64020.49 | 0.000237s | 0.0017s | 0.0027s | 0.00% |
+| failure | 58651.03 | 0.000263s | 0.0017s | 0.0028s | 0.00% |
+
+结论：三组均无 HTTP 错误，Kafka 正常和故障模式没有出现依赖 broker RTT 的固定等待，也没有观察到
+稳定可复现的延迟回归。单机短时 QPS 波动明显，因此只用于证明当前 fail-open 路径的阶段内相对表现。
+
+复现入口：
+
+```bash
+HAOHTTP_BENCH_SCENARIO=redirect \
+HAOHTTP_BENCH_MODE=memory \
+HAOHTTP_BENCH_KAFKA_MODE=disabled \
+HAOHTTP_BENCH_REQUESTS=20000 \
+HAOHTTP_BENCH_CONCURRENCY=16 \
+bash tests/scripts/benchmark_shortlink.sh
+```
+
+将 `HAOHTTP_BENCH_KAFKA_MODE` 依次改为 `normal` 和 `failure` 完成三模式对照。
 
 ## 结果分析记录
 

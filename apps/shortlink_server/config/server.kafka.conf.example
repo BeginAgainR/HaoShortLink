@@ -1,0 +1,22 @@
+# HaoShortLink configuration for Kafka testing from the OrbStack Linux VM.
+# Format: key=value
+
+server.name=HaoShortLinkKafka
+server.port=18082
+server.thread_num=4
+log.level=INFO
+metrics.enabled=true
+
+storage.type=memory
+redis.enabled=false
+rate_limit.enabled=false
+
+# Kafka remains fail-open: it is not part of liveness or readiness.
+kafka.enabled=true
+kafka.bootstrap_servers=docker.orb.internal:19092
+kafka.topic=hao-shortlink.access-events.v1
+kafka.client_id=hao-shortlink-server-vm
+kafka.queue_max_messages=10000
+kafka.message_timeout_ms=10000
+kafka.linger_ms=5
+kafka.shutdown_timeout_ms=3000

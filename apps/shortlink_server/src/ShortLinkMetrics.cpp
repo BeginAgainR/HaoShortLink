@@ -20,6 +20,10 @@ const std::array<const char*, 8> kBackendOperationLabels {
     "create", "find", "list", "update", "get", "set", "delete", "rate_limit"
 };
 const std::array<const char*, 3> kRateLimitResultLabels { "allowed", "limited", "error" };
+const std::array<const char*, 3> kAccessEventEnqueueResultLabels {
+    "accepted", "queue_full", "error"
+};
+const std::array<const char*, 2> kAccessEventDeliveryResultLabels { "success", "failure" };
 
 template <typename Counters>
 void resetCounters(Counters* counters)
@@ -39,6 +43,8 @@ ShortLinkMetrics::ShortLinkMetrics()
     resetCounters(&cacheCounters_);
     resetCounters(&backendErrorCounters_);
     resetCounters(&rateLimitCounters_);
+    resetCounters(&accessEventEnqueueCounters_);
+    resetCounters(&accessEventDeliveryCounters_);
 }
 
 void ShortLinkMetrics::recordCreate(CreateResult result, Storage storage) noexcept
@@ -72,6 +78,25 @@ void ShortLinkMetrics::recordBackendError(Backend backend, BackendOperation oper
 void ShortLinkMetrics::recordRateLimit(RateLimitResult result) noexcept
 {
     rateLimitCounters_[static_cast<std::size_t>(result)].fetch_add(1, std::memory_order_relaxed);
+}
+
+void ShortLinkMetrics::recordAccessEventEnqueue(AccessEventEnqueueResult result) noexcept
+{
+    accessEventEnqueueCounters_[static_cast<std::size_t>(result)].fetch_add(
+        1,
+        std::memory_order_relaxed);
+}
+
+void ShortLinkMetrics::recordAccessEventDelivery(AccessEventDeliveryResult result) noexcept
+{
+    accessEventDeliveryCounters_[static_cast<std::size_t>(result)].fetch_add(
+        1,
+        std::memory_order_relaxed);
+}
+
+void ShortLinkMetrics::setAccessEventQueueSize(std::uint64_t size) noexcept
+{
+    accessEventQueueSize_.store(size, std::memory_order_relaxed);
 }
 
 std::string ShortLinkMetrics::renderPrometheus() const
@@ -160,6 +185,29 @@ std::string ShortLinkMetrics::renderPrometheus() const
                << kRateLimitResultLabels[result] << "\"} "
                << rateLimitCounters_[result].load(std::memory_order_relaxed) << '\n';
     }
+
+    output << "# HELP haohttp_shortlink_access_event_enqueue_total Kafka access event enqueue results.\n"
+           << "# TYPE haohttp_shortlink_access_event_enqueue_total counter\n";
+    for (std::size_t result = 0; result < kAccessEventEnqueueResultLabels.size(); ++result)
+    {
+        output << "haohttp_shortlink_access_event_enqueue_total{result=\""
+               << kAccessEventEnqueueResultLabels[result] << "\"} "
+               << accessEventEnqueueCounters_[result].load(std::memory_order_relaxed) << '\n';
+    }
+
+    output << "# HELP haohttp_shortlink_access_event_delivery_total Kafka access event delivery results.\n"
+           << "# TYPE haohttp_shortlink_access_event_delivery_total counter\n";
+    for (std::size_t result = 0; result < kAccessEventDeliveryResultLabels.size(); ++result)
+    {
+        output << "haohttp_shortlink_access_event_delivery_total{result=\""
+               << kAccessEventDeliveryResultLabels[result] << "\"} "
+               << accessEventDeliveryCounters_[result].load(std::memory_order_relaxed) << '\n';
+    }
+
+    output << "# HELP haohttp_shortlink_access_event_queue_size Kafka access events awaiting delivery.\n"
+           << "# TYPE haohttp_shortlink_access_event_queue_size gauge\n"
+           << "haohttp_shortlink_access_event_queue_size "
+           << accessEventQueueSize_.load(std::memory_order_relaxed) << '\n';
 
     return output.str();
 }
