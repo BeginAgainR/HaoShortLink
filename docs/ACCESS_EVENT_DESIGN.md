@@ -1,6 +1,6 @@
 # 访问事件与 Kafka 设计
 
-状态：v1.8.0-v1.8.6 已完成本地实现与验证；云端 CI 确认待分支提交
+状态：已完成；v1.8.0-v1.8.6 本地实现、故障回归与 GitHub Actions 云端 CI 均已通过
 
 ## 业务目标
 
@@ -239,11 +239,11 @@ request ID、URL、IP、User-Agent 或错误消息作为 label；持续故障日
    - 状态：已完成。
    - 实现消费循环、schema 校验、手动 offset、错误退避、discard 和结构化日志。
 6. `v1.8.5` 故障与可观测性收口：
-   - 状态：已完成本地验证，Kafka CI job 已配置。
+   - 状态：已完成本地验证，Kafka CI job 已配置并通过。
    - 覆盖 broker 中断、队列满、重复、非法事件、consumer 重启和 shutdown。
    - 接入 Kafka 集成 CI，并完成三模式性能对照。
 7. `v1.8.6` 全量回归与文档收口：
-   - 状态：本地已完成；只待分支提交后的 GitHub Actions 结果确认。
+   - 状态：已完成；GitHub Actions run `29637356364` 三个 job 均已通过。
    - Linux VM、完整 Compose、Kafka 故障恢复、三模式性能和干净目录回归均已通过。
    - 干净源码目录：`/Users/hao/Code/haoHTTP-v18-clean`；VM 构建目录：`/tmp/haoHTTP-v18-clean-build`。
 

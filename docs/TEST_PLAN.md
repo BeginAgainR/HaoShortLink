@@ -1,7 +1,7 @@
 # 测试计划
 
-状态：持续维护；v1.7 生命周期本地全量回归和 GitHub Actions 云端 CI 已通过
-当前实现：已建立框架与业务基础测试、API 冒烟、MySQL / Redis 集成、Redis 不可用回退、异常场景、限流、健康语义、Compose 编排和监控冒烟入口；v1.7 已覆盖迁移、正常、禁用、过期、内部查询、缓存失效和旧格式陈旧缓存场景。
+状态：持续维护；v1.8 Kafka 访问事件本地全量回归和 GitHub Actions 云端 CI 已通过
+当前实现：已建立框架与业务基础测试、API 冒烟、MySQL / Redis 集成、Redis 不可用回退、异常场景、限流、健康语义、Compose 编排、监控冒烟和 Kafka 故障回归入口。
 
 ## v1.3 执行顺序
 
@@ -127,8 +127,8 @@ bash tests/scripts/rate_limit_nginx_test.sh
 
 ## v1.8 验证
 
-当前状态：单元、Linux VM、Ubuntu 22.04 容器构建、Kafka 完整集成、broker 恢复和三模式性能对照已通过；
-独立 Kafka CI job 已配置，待分支提交后的 GitHub Actions 结果确认。
+当前状态：单元、Linux VM、Ubuntu 22.04 容器构建、Kafka 完整集成、broker 恢复、三模式性能对照和
+GitHub Actions 独立 Kafka CI job 已通过。
 
 干净目录验证：
 
@@ -170,7 +170,7 @@ bash tests/scripts/rate_limit_nginx_test.sh
   disabled / expired 运行时事件、record key、producer 初始化失败降级、consumer offset / restart / discard /
   有界关闭、broker 停止与恢复、队列满、delivery failure、UI localhost 绑定与健康；`error` 异常映射由
   应用层 handler 单元测试覆盖。
-- 完整 Compose 和干净目录已通过；GitHub Actions 云端验证待分支提交。
+- 完整 Compose、干净目录和 GitHub Actions run `29637356364` 已通过；云端三个 job 均成功。
 
 ## 测试分层
 

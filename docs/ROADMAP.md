@@ -20,7 +20,7 @@
 | v1.5 | 已完成 | 可观测性与依赖 CI | 结构化日志、指标统计、Prometheus、Grafana、MySQL / Redis 集成 CI |
 | v1.6 | 已完成 | 可靠性与流量保护 | Redis 限流、降级策略、健康语义、保护性测试 |
 | v1.7 | 已完成 | 链接生命周期 | 链接状态、过期策略、详情与列表、缓存失效 |
-| v1.8 | 本地实现与验证完成，云 CI 待确认 | 消息队列与异步事件 | Kafka、Kafka UI、异步生产、独立消费、故障降级与观测 |
+| v1.8 | 已完成 | 消息队列与异步事件 | Kafka、Kafka UI、异步生产、独立消费、故障降级与观测 |
 | v1.9 | 草案 | 访问统计与工程化增强 | 幂等统计、查询 API、重试与 DLQ、Lag、重放与发布检查 |
 | v2.0 | 草案 | 功能相对齐全的短链接服务 | 用户与权限、链接归属、管理 API、整体验收 |
 | v2.1 | 条件候选 | 生命周期事件与事件治理 | Transactional Outbox、schema 治理评估 |
@@ -500,7 +500,7 @@ v1.7 目标是在引入消息队列前补齐短链接自身的基础生命周期
 - 有界队列、delivery callback、fail-open 和低基数观测。
 - Broker 中断、队列满、重复、非法事件和消费者重启验证。
 
-当前状态：v1.8.0-v1.8.6 已完成本地实现、全量回归和干净目录验证；只剩分支提交后的 GitHub Actions 结果确认。详细设计见 `docs/ACCESS_EVENT_DESIGN.md`。
+当前状态：已完成。v1.8.0-v1.8.6 本地实现、全量回归、干净目录验证和 GitHub Actions 云端 CI 均已通过。详细设计见 `docs/ACCESS_EVENT_DESIGN.md`。
 
 ### v1.8 执行批次
 
@@ -532,9 +532,9 @@ v1.8 目标是引入 Kafka，将短码跳转产生的访问事件从同步请求
    - 覆盖 broker 启停、队列满、delivery failure、重复、非法事件、consumer 重启和 shutdown。
    - 增加低基数 producer / consumer 观测，并接入适合的 Kafka 集成 CI。
 7. `v1.8.6` 全量回归与文档收口：
-   - 状态：本地已完成；待 GitHub Actions 确认。
+   - 状态：已完成；GitHub Actions 云端 CI 已通过。
    - 比较 Kafka 关闭、正常和故障三组 redirect 基线。
-   - Linux VM、完整 Compose、干净源码目录和 Ubuntu 22.04 Docker 构建已通过；云端 job 在分支提交后确认。
+   - Linux VM、完整 Compose、干净源码目录、Ubuntu 22.04 Docker 构建和云端 Kafka job 均已通过。
 
 ## 阶段 11：访问统计与工程化增强
 

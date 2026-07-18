@@ -283,7 +283,7 @@ shortlink:{code} -> original_url
 
 ### v1.8 消息队列优先级
 
-状态：已实现并完成本地故障验证；云端 Kafka CI 待分支提交后确认
+状态：已实现并完成本地故障验证与 GitHub Actions 云端 Kafka CI 验证
 
 决策：
 
