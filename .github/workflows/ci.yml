@@ -131,6 +131,7 @@ jobs:
       SHORTLINK_KAFKA_IMAGE: apache/kafka:4.3.1
       SHORTLINK_KAFKA_UI_IMAGE: ghcr.io/kafbat/kafka-ui:v1.5.0
       SHORTLINK_KAFKA_EXTERNAL_HOST: 127.0.0.1
+      HAOHTTP_KCAT_BIN: kafkacat
 
     steps:
       - name: Check out repository
@@ -151,7 +152,7 @@ jobs:
             libhiredis-dev \
             librdkafka-dev \
             nlohmann-json3-dev \
-            kcat
+            kafkacat
 
       - name: Build and install muduo core libraries
         run: |
