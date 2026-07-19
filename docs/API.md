@@ -190,7 +190,7 @@ PUT /internal/short-links/{code}
 
 ## v1.9 内部访问统计接口
 
-当前状态：已实现并完成本地完整 Compose 回归；云端 CI 待分支提交后确认。
+当前状态：已实现；本地完整 Compose 回归和 GitHub Actions 云端 CI 均已通过。
 
 ```text
 GET /internal/short-links/{code}/statistics

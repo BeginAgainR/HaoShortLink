@@ -1,6 +1,6 @@
 # 测试计划
 
-状态：持续维护；v1.9 访问统计本地全量、故障和干净目录回归已通过，待分支提交后的 GitHub Actions 确认
+状态：持续维护；v1.9 访问统计本地全量、故障、干净目录和 GitHub Actions 云端 CI 均已通过
 当前实现：已建立框架与业务基础测试、API 冒烟、MySQL / Redis 集成、Redis 不可用回退、异常场景、限流、健康语义、Compose 编排、监控冒烟和 Kafka 故障回归入口。
 
 ## v1.3 执行顺序
@@ -174,8 +174,8 @@ GitHub Actions 独立 Kafka CI job 已通过。
 
 ## v1.9 验证
 
-当前状态：Linux VM 单元构建、完整 Compose / Kafka / MySQL 故障回归和独立干净目录全量回归已通过；
-分支提交后的 GitHub Actions 仍待最终确认。
+当前状态：Linux VM 单元构建、完整 Compose / Kafka / MySQL 故障回归、独立干净目录和
+GitHub Actions run `29679640891` 均已通过；云端三个 job 全部成功。
 
 - 当前工作区已通过完整 Compose、Kafka 集成、broker 恢复、MySQL / DLQ 故障、重放和隔离重建验证。
 - 提交对象另在 VM 干净源码目录 `/tmp/haoHTTP-v19-close-src.4IeBqF`、构建目录
