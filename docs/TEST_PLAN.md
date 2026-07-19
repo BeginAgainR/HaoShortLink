@@ -1,6 +1,6 @@
 # 测试计划
 
-状态：持续维护；v1.8 Kafka 访问事件本地全量回归和 GitHub Actions 云端 CI 已通过
+状态：持续维护；v1.9 访问统计本地全量、故障和干净目录回归已通过，待分支提交后的 GitHub Actions 确认
 当前实现：已建立框架与业务基础测试、API 冒烟、MySQL / Redis 集成、Redis 不可用回退、异常场景、限流、健康语义、Compose 编排、监控冒烟和 Kafka 故障回归入口。
 
 ## v1.3 执行顺序
@@ -171,6 +171,24 @@ GitHub Actions 独立 Kafka CI job 已通过。
   有界关闭、broker 停止与恢复、队列满、delivery failure、UI localhost 绑定与健康；`error` 异常映射由
   应用层 handler 单元测试覆盖。
 - 完整 Compose、干净目录和 GitHub Actions run `29637356364` 已通过；云端三个 job 均成功。
+
+## v1.9 验证
+
+当前状态：Linux VM 单元构建、完整 Compose / Kafka / MySQL 故障回归和独立干净目录全量回归已通过；
+分支提交后的 GitHub Actions 仍待最终确认。
+
+- 当前工作区已通过完整 Compose、Kafka 集成、broker 恢复、MySQL / DLQ 故障、重放和隔离重建验证。
+- 提交对象另在 VM 干净源码目录 `/tmp/haoHTTP-v19-close-src.4IeBqF`、构建目录
+  `/tmp/haoHTTP-v19-close-src.4IeBqF-build` 通过脚本语法检查、Release 构建、CTest 和 API smoke。
+
+- 迁移覆盖 `event_id` 收据、结果累计和 UTC 小时投影；重复事件只保留一份副作用。
+- producer -> Kafka -> consumer -> MySQL -> 内部统计 API 闭环覆盖 success / disabled / expired / ignored。
+- 非法 JSON、schema / contract 错误、key 不匹配和 orphan 使用固定原因进入 DLQ，DLQ 不可用时源 offset 不前移。
+- MySQL 不可用时 consumer 有界重试并非零退出，lag 包含未提交消息；恢复后统计恰好增加一次且 lag 回落。
+- API 覆盖全量 summary、小时趋势、零统计、404、UTC 对齐、interval 和最大范围边界。
+- consumer `/health`、低基数 counters、DLQ、retry、lag 和 last-success 指标已验证。
+- 独立 topic 的同 group offset reset 不改变统计并产生 duplicate 指标；新 group 可向临时数据库重建 retained range。
+- Kafka topic 保留 7 天、DLQ 保留 30 天；该验证不声明超出 retention 的历史可恢复。
 
 ## 测试分层
 

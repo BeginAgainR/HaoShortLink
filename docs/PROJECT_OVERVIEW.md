@@ -1,7 +1,7 @@
 # 项目概览
 
 状态：已建立基础版，持续维护
-当前实现：已实现短链闭环、MySQL / Redis、生命周期、流量保护、可观测性和 Kafka 访问事件管道；v1.8 本地全量回归和 GitHub Actions 云端 Kafka CI 已通过
+当前实现：已实现短链闭环、MySQL / Redis、生命周期、流量保护、可观测性、Kafka 访问事件管道和 MySQL 访问统计投影；v1.9 本地全量回归已通过，待云端 CI 收口
 
 ## 项目定位
 
@@ -24,7 +24,8 @@ HaoShortLink 是一个基于 muduo 网络库的 C++17 HTTP 框架项目。当前
 - v1.5 已完成 request ID、结构化请求日志、HTTP / 短链指标、Prometheus、Grafana、六面板 dashboard 和监控链路 CI 冒烟验证。
 - v1.6 已实现可配置的 Redis Lua 全局创建限流、fail-open、liveness / readiness 和保护性测试；GitHub Actions 云端 CI 已通过。
 - v1.7 已实现 `active` / `disabled` 状态、可选过期时间、内部详情 / 分页 / 更新接口、Redis 生命周期缓存和失效测试；本地全量回归和 GitHub Actions 云端 CI 已通过。
-- v1.8 已实现 Kafka 访问事件、异步 fail-open producer、独立 consumer、本地 KRaft / Kafka UI 编排、观测和故障验证；访问统计继续属于 v1.9。
+- v1.8 已实现 Kafka 访问事件、异步 fail-open producer、独立 consumer、本地 KRaft / Kafka UI 编排、观测和故障验证。
+- v1.9 已在本地实现 MySQL 幂等统计投影、内部统计查询、重试 / DLQ、consumer 健康与 lag、受控重放和隔离重建；分支提交后的云端 CI 待确认。
 - 完整部署方案尚未实现。
 - 已完成请求日志、统一 JSON 错误响应、JSON 响应辅助和配置加载等框架基础能力。
 - MySQL / Redis 依赖集成、监控冒烟、限流和健康语义测试已配置进入 CI。
@@ -44,6 +45,7 @@ apps/
     config/                 配置文件预留目录
     sql/                    数据库脚本预留目录
   shortlink_event_consumer/
+    include/                consumer 配置、统计写入、DLQ 和观测组件
     src/                    独立 Kafka consumer 入口
     config/                 consumer 配置样例
 
@@ -60,12 +62,13 @@ tests/                      自动化测试和测试脚本
 以下能力尚未实现，不应在公开文档中描述为已完成：
 
 - 生产告警和长期容量规划
-- 访问统计
+- 公开统计 API、独立访客、地理位置或 Referer 等分析维度
 - 用户系统
 - 后台管理
 - 告警策略
 
-v1.8 实现边界和验证口径见 `docs/ACCESS_EVENT_DESIGN.md`。
+v1.8 事件边界见 `docs/ACCESS_EVENT_DESIGN.md`；v1.9 统计语义、幂等、DLQ 和重放边界见
+`docs/ACCESS_STATISTICS_DESIGN.md`。
 
 ## 文档维护原则
 

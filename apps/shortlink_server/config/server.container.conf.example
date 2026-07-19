@@ -10,6 +10,7 @@ metrics.enabled=true
 # This file is intended for shortlink_server running inside the same
 # Docker Compose network as MySQL and Redis.
 storage.type=mysql
+statistics.enabled=true
 mysql.host=tcp://mysql:3306
 mysql.user=hao_shortlink
 mysql.password=hao_shortlink

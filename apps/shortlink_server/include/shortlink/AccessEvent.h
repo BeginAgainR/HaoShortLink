@@ -29,10 +29,26 @@ struct AccessEvent
     int httpStatus { 500 };
 };
 
+enum class AccessEventParseError
+{
+    None,
+    InvalidJson,
+    UnsupportedSchema,
+    UnsupportedEventType,
+    InvalidContract
+};
+
+struct AccessEventParseResult
+{
+    std::optional<AccessEvent> event;
+    AccessEventParseError error { AccessEventParseError::None };
+};
+
 std::string accessEventResultToString(AccessEventResult result);
 std::optional<AccessEventResult> parseAccessEventResult(const std::string& value);
 bool isValidAccessEvent(const AccessEvent& event) noexcept;
 std::string serializeAccessEvent(const AccessEvent& event);
+AccessEventParseResult parseAccessEventDetailed(const std::string& payload) noexcept;
 std::optional<AccessEvent> parseAccessEvent(const std::string& payload) noexcept;
 std::string generateAccessEventId();
 std::int64_t nowEpochMilliseconds();

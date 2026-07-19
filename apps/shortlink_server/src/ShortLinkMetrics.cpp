@@ -16,8 +16,8 @@ const std::array<const char*, 5> kRedirectResultLabels {
 const std::array<const char*, 3> kCacheOperationLabels { "get", "set", "delete" };
 const std::array<const char*, 4> kCacheResultLabels { "hit", "miss", "success", "error" };
 const std::array<const char*, 2> kBackendLabels { "mysql", "redis" };
-const std::array<const char*, 8> kBackendOperationLabels {
-    "create", "find", "list", "update", "get", "set", "delete", "rate_limit"
+const std::array<const char*, 9> kBackendOperationLabels {
+    "create", "find", "list", "update", "statistics", "get", "set", "delete", "rate_limit"
 };
 const std::array<const char*, 3> kRateLimitResultLabels { "allowed", "limited", "error" };
 const std::array<const char*, 3> kAccessEventEnqueueResultLabels {
@@ -162,7 +162,7 @@ std::string ShortLinkMetrics::renderPrometheus() const
         {
             const bool validCombination =
                 (backend == static_cast<std::size_t>(Backend::Mysql) &&
-                 operation <= static_cast<std::size_t>(BackendOperation::Update)) ||
+                 operation <= static_cast<std::size_t>(BackendOperation::Statistics)) ||
                 (backend == static_cast<std::size_t>(Backend::Redis) &&
                  operation >= static_cast<std::size_t>(BackendOperation::Get));
             if (!validCombination)

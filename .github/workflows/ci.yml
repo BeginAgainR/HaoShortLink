@@ -152,6 +152,7 @@ jobs:
             libhiredis-dev \
             librdkafka-dev \
             nlohmann-json3-dev \
+            default-mysql-client \
             kafkacat
 
       - name: Build and install muduo core libraries
@@ -174,7 +175,7 @@ jobs:
           cmake -S . -B "${BUILD_DIR}" -DCMAKE_BUILD_TYPE=Release
           cmake --build "${BUILD_DIR}" -j"$(nproc)"
 
-      - name: Run Kafka integration and broker recovery tests
+      - name: Run Kafka and access statistics integration tests
         run: bash tests/scripts/run_kafka_integration_with_compose.sh
 
       - name: Stop Kafka test resources

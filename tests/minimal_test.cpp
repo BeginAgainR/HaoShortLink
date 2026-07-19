@@ -5,6 +5,9 @@
 #include "router/Router.h"
 #include "shortlink/AccessEvent.h"
 #include "shortlink/AccessEventPublisher.h"
+#include "shortlink/AccessStatistics.h"
+#include "shortlink/ConsumerMetrics.h"
+#include "shortlink/KafkaDeadLetterPublisher.h"
 #include "shortlink/MemoryShortLinkRepository.h"
 #include "shortlink/RedirectHandler.h"
 #include "shortlink/ShortLinkService.h"
@@ -268,10 +271,29 @@ void testAccessEventRejectsInvalidPayloads()
 
     expect(!shortlink::parseAccessEvent("not-json").has_value(),
            "invalid JSON access event should be rejected");
+    expect(shortlink::parseAccessEventDetailed("not-json").error ==
+               shortlink::AccessEventParseError::InvalidJson,
+           "invalid JSON should retain a stable parse reason");
+    expect(shortlink::parseAccessEventDetailed(
+               "{\"schema_version\":1,\"event_type\":\"short_link_access\","
+               "\"event_id\":\"0123456789abcdef0123456789abcdef\","
+               "\"occurred_at_ms\":18446744073709551615,\"request_id\":\"request-1\","
+               "\"code\":\"000001\",\"result\":\"success\",\"http_status\":302}")
+               .error == shortlink::AccessEventParseError::InvalidContract,
+           "values outside the event contract should not be classified as invalid JSON");
     expect(!shortlink::parseAccessEvent(
                 "{\"schema_version\":2,\"event_type\":\"short_link_access\"}")
                 .has_value(),
            "unsupported access event schema should be rejected");
+    expect(shortlink::parseAccessEventDetailed(
+               "{\"schema_version\":2,\"event_type\":\"short_link_access\"}")
+               .error == shortlink::AccessEventParseError::UnsupportedSchema,
+           "unsupported schema should retain a stable parse reason");
+
+    expect(shortlink::parseAccessEventDetailed(
+               "{\"schema_version\":1,\"event_type\":\"unknown\"}")
+               .error == shortlink::AccessEventParseError::UnsupportedEventType,
+           "unsupported event type should retain a stable parse reason");
 
     std::string missingRequestId = base;
     const std::string requestField = "\"request_id\":\"request-01\",";
@@ -325,6 +347,138 @@ void testAccessEventIdGeneration()
                    "generated event ID should use lowercase hexadecimal characters");
         }
     }
+}
+
+void testAccessStatisticsResultAndBucketSemantics()
+{
+    expect(shortlink::isAggregatedAccessResult(shortlink::AccessEventResult::Success),
+           "successful access events should be aggregated");
+    expect(shortlink::isAggregatedAccessResult(shortlink::AccessEventResult::Disabled),
+           "disabled access events should be aggregated for an existing short link");
+    expect(!shortlink::isAggregatedAccessResult(shortlink::AccessEventResult::NotFound),
+           "not-found events should not create per-code statistics");
+
+    expect(shortlink::accessStatisticsResultIndex(shortlink::AccessEventResult::Success) == 0,
+           "success should use the first statistics result slot");
+    expect(shortlink::accessStatisticsResultIndex(shortlink::AccessEventResult::Error) == 3,
+           "error should use the final statistics result slot");
+    expect(!shortlink::accessStatisticsResultIndex(shortlink::AccessEventResult::NotFound),
+           "not-found should not have a statistics result slot");
+
+    expect(shortlink::utcHourBucketStartEpochSeconds(1784304000123) == 1784304000,
+           "an event on an hour boundary should keep the UTC boundary");
+    expect(shortlink::utcHourBucketStartEpochSeconds(1784307599999) == 1784304000,
+           "an event within an hour should round down to the UTC hour boundary");
+
+    bool threw = false;
+    try
+    {
+        (void)shortlink::utcHourBucketStartEpochSeconds(0);
+    }
+    catch (const std::invalid_argument&)
+    {
+        threw = true;
+    }
+    expect(threw, "non-positive access event timestamps should be rejected");
+
+    expect(shortlink::parseAccessStatisticsInterval("hour") ==
+               shortlink::AccessStatisticsInterval::Hour,
+           "hour statistics interval should parse");
+    expect(shortlink::parseAccessStatisticsInterval("day") ==
+               shortlink::AccessStatisticsInterval::Day,
+           "day statistics interval should parse");
+    expect(!shortlink::parseAccessStatisticsInterval("week"),
+           "unsupported statistics interval should be rejected");
+    expect(shortlink::accessStatisticsBucketSeconds(
+               shortlink::AccessStatisticsInterval::Day) == 86400,
+           "day statistics interval should use UTC day buckets");
+
+    shortlink::AccessStatisticsQuery hourlyQuery;
+    hourlyQuery.fromEpochSeconds = 1784304000;
+    hourlyQuery.toEpochSeconds = 1784307600;
+    hourlyQuery.interval = shortlink::AccessStatisticsInterval::Hour;
+    expect(shortlink::isValidAccessStatisticsQuery(hourlyQuery),
+           "aligned one-hour statistics query should be valid");
+    hourlyQuery.fromEpochSeconds += 1;
+    expect(!shortlink::isValidAccessStatisticsQuery(hourlyQuery),
+           "unaligned statistics range should be rejected");
+    hourlyQuery.fromEpochSeconds = 1784304000;
+    hourlyQuery.toEpochSeconds = hourlyQuery.fromEpochSeconds + 32 * 86400;
+    expect(!shortlink::isValidAccessStatisticsQuery(hourlyQuery),
+           "hour statistics range over 31 days should be rejected");
+
+    shortlink::AccessStatisticsResultCounts counts { 2, 1, 1, 3 };
+    expect(shortlink::accessStatisticsAttemptCount(counts) == 7,
+           "statistics attempts should sum all aggregate result categories");
+}
+
+void testDeadLetterEnvelope()
+{
+    shortlink::consumer::DeadLetterRecord record;
+    record.sourceTopic = "hao-shortlink.access-events.v1";
+    record.sourcePartition = 2;
+    record.sourceOffset = 42;
+    record.key = "000001";
+    record.payload = "not-json";
+    record.reason = shortlink::consumer::DeadLetterReason::InvalidJson;
+
+    const std::string payload = shortlink::consumer::serializeDeadLetterRecord(
+        record,
+        1784304000123);
+    expect(payload.find("\"schema_version\":1") != std::string::npos,
+           "DLQ envelope should be versioned");
+    expect(payload.find("\"reason\":\"invalid_json\"") != std::string::npos,
+           "DLQ envelope should retain a fixed reason");
+    expect(payload.find("\"source_partition\":2") != std::string::npos,
+           "DLQ envelope should retain the source partition");
+    expect(payload.find("\"source_offset\":42") != std::string::npos,
+           "DLQ envelope should retain the source offset");
+    expect(payload.find("\"original_key_base64\":\"MDAwMDAx\"") != std::string::npos,
+           "DLQ envelope should safely encode the original key");
+    expect(payload.find("\"original_payload_base64\":\"bm90LWpzb24=\"") !=
+               std::string::npos,
+           "DLQ envelope should safely encode the original payload");
+}
+
+void testConsumerMetricsRendering()
+{
+    shortlink::consumer::ConsumerMetrics metrics;
+    metrics.recordMessage(
+        shortlink::consumer::ConsumerMetrics::MessageResult::Aggregated);
+    metrics.recordMessage(
+        shortlink::consumer::ConsumerMetrics::MessageResult::Duplicate);
+    metrics.recordRetry(
+        shortlink::consumer::ConsumerMetrics::RetryOperation::Mysql);
+    metrics.recordDlq(shortlink::consumer::ConsumerMetrics::DlqResult::Failure);
+    metrics.replaceLag({ { 0, 3 }, { 2, 7 } });
+    metrics.recordSuccess();
+    metrics.setHealthy(true);
+
+    const std::string rendered = metrics.renderPrometheus();
+    expect(rendered.find(
+               "haohttp_shortlink_access_consumer_messages_total{result=\"aggregated\"} 1") !=
+               std::string::npos,
+           "consumer metrics should render aggregated messages");
+    expect(rendered.find(
+               "haohttp_shortlink_access_consumer_messages_total{result=\"duplicate\"} 1") !=
+               std::string::npos,
+           "consumer metrics should render duplicate messages");
+    expect(rendered.find(
+               "haohttp_shortlink_access_consumer_retries_total{operation=\"mysql\"} 1") !=
+               std::string::npos,
+           "consumer metrics should render bounded retry labels");
+    expect(rendered.find(
+               "haohttp_shortlink_access_consumer_dlq_total{result=\"failure\"} 1") !=
+               std::string::npos,
+           "consumer metrics should render DLQ delivery failures");
+    expect(rendered.find(
+               "haohttp_shortlink_access_consumer_lag{partition=\"2\"} 7") !=
+               std::string::npos,
+           "consumer metrics should expose lag only by partition");
+    expect(rendered.find("haohttp_shortlink_access_consumer_last_success_unixtime 0") ==
+               std::string::npos,
+           "consumer metrics should expose the last successful commit time");
+    expect(metrics.healthy(), "consumer health should be independently observable");
 }
 
 class RecordingAccessEventPublisher : public shortlink::AccessEventPublisher
@@ -897,6 +1051,9 @@ int main()
         {"access event round trip", testAccessEventRoundTrip},
         {"access event rejects invalid payloads", testAccessEventRejectsInvalidPayloads},
         {"access event ID generation", testAccessEventIdGeneration},
+        {"access statistics result and bucket semantics", testAccessStatisticsResultAndBucketSemantics},
+        {"dead-letter envelope", testDeadLetterEnvelope},
+        {"consumer metrics rendering", testConsumerMetricsRendering},
         {"access event publisher abstraction", testAccessEventPublisherAbstraction},
         {"redirect handler publishes error and rethrows", testRedirectHandlerPublishesErrorAndRethrows},
         {"HTTP metrics Prometheus rendering", testHttpMetricsPrometheusRendering},

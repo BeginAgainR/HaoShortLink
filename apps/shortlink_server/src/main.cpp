@@ -1,7 +1,9 @@
 #include "http/HttpServer.h"
 #include "shortlink/AccessEventPublisher.h"
+#include "shortlink/AccessStatisticsRepository.h"
 #include "shortlink/KafkaAccessEventPublisher.h"
 #include "shortlink/MemoryShortLinkRepository.h"
+#include "shortlink/MySqlAccessStatisticsRepository.h"
 #include "shortlink/MySqlShortLinkRepository.h"
 #include "shortlink/RateLimiter.h"
 #include "shortlink/RedisCachedShortLinkRepository.h"
@@ -23,6 +25,8 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <iomanip>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -41,6 +45,7 @@ struct ServerConfig
     int threadNum = 4;
     bool metricsEnabled = true;
     std::string storageType = "memory";
+    bool statisticsEnabled = false;
     std::string mysqlHost = "tcp://127.0.0.1:3306";
     std::string mysqlUser = "root";
     std::string mysqlPassword;
@@ -85,6 +90,8 @@ ServerConfig loadServerConfig(const std::string& configPath)
         serverConfig.threadNum = config.getInt("server.thread_num", serverConfig.threadNum);
         serverConfig.metricsEnabled = config.getBool("metrics.enabled", serverConfig.metricsEnabled);
         serverConfig.storageType = config.getString("storage.type", serverConfig.storageType);
+        serverConfig.statisticsEnabled =
+            config.getBool("statistics.enabled", serverConfig.statisticsEnabled);
         serverConfig.mysqlHost = config.getString("mysql.host", serverConfig.mysqlHost);
         serverConfig.mysqlUser = config.getString("mysql.user", serverConfig.mysqlUser);
         serverConfig.mysqlPassword = config.getString("mysql.password", serverConfig.mysqlPassword);
@@ -139,6 +146,13 @@ ServerConfig loadServerConfig(const std::string& configPath)
     {
         std::cerr << "Invalid mysql.pool_size. Using default pool_size 4." << std::endl;
         serverConfig.mysqlPoolSize = 4;
+    }
+
+    if (serverConfig.statisticsEnabled && serverConfig.storageType != "mysql")
+    {
+        std::cerr << "statistics.enabled requires storage.type=mysql. "
+                  << "Disabling statistics API." << std::endl;
+        serverConfig.statisticsEnabled = false;
     }
 
     if (serverConfig.redisPort <= 0 || serverConfig.redisPort > 65535)
@@ -501,6 +515,179 @@ std::optional<std::uint64_t> parseUnsigned(const std::string& value)
     return result;
 }
 
+std::string formatUtcTimestampMs(std::int64_t epochMilliseconds)
+{
+    const std::int64_t epochSeconds = epochMilliseconds / 1000;
+    const std::int64_t milliseconds = epochMilliseconds % 1000;
+    std::string timestamp = shortlink::ShortLinkService::formatUtcTimestamp(epochSeconds);
+    timestamp.pop_back();
+    std::ostringstream output;
+    output << timestamp << '.' << std::setw(3) << std::setfill('0') << milliseconds << 'Z';
+    return output.str();
+}
+
+std::string statisticsCountsJson(
+    const shortlink::AccessStatisticsResultCounts& counts)
+{
+    return "{\"success\":" + std::to_string(counts[0]) +
+           ",\"disabled\":" + std::to_string(counts[1]) +
+           ",\"expired\":" + std::to_string(counts[2]) +
+           ",\"error\":" + std::to_string(counts[3]) + "}";
+}
+
+std::optional<shortlink::AccessStatisticsQuery> parseStatisticsQuery(
+    const http::HttpRequest& req,
+    http::HttpResponse* resp)
+{
+    shortlink::AccessStatisticsQuery query;
+    const std::string intervalValue = req.getQueryParameters("interval");
+    if (!intervalValue.empty())
+    {
+        const std::optional<shortlink::AccessStatisticsInterval> interval =
+            shortlink::parseAccessStatisticsInterval(intervalValue);
+        if (!interval)
+        {
+            resp->setErrorResponse(http::HttpResponse::k400BadRequest,
+                                   "invalid_interval",
+                                   "interval must be hour or day");
+            return std::nullopt;
+        }
+        query.interval = *interval;
+    }
+
+    const std::int64_t bucketSeconds =
+        shortlink::accessStatisticsBucketSeconds(query.interval);
+    const std::int64_t now = shortlink::ShortLinkService::nowEpochSeconds();
+    query.toEpochSeconds = ((now + bucketSeconds - 1) / bucketSeconds) * bucketSeconds;
+    query.fromEpochSeconds = query.toEpochSeconds - 7 * 86400;
+
+    const std::string fromValue = req.getQueryParameters("from");
+    if (!fromValue.empty())
+    {
+        const std::optional<std::int64_t> from =
+            shortlink::ShortLinkService::parseUtcTimestamp(fromValue);
+        if (!from)
+        {
+            resp->setErrorResponse(http::HttpResponse::k400BadRequest,
+                                   "invalid_from",
+                                   "from must be a UTC timestamp");
+            return std::nullopt;
+        }
+        query.fromEpochSeconds = *from;
+    }
+
+    const std::string toValue = req.getQueryParameters("to");
+    if (!toValue.empty())
+    {
+        const std::optional<std::int64_t> to =
+            shortlink::ShortLinkService::parseUtcTimestamp(toValue);
+        if (!to)
+        {
+            resp->setErrorResponse(http::HttpResponse::k400BadRequest,
+                                   "invalid_to",
+                                   "to must be a UTC timestamp");
+            return std::nullopt;
+        }
+        query.toEpochSeconds = *to;
+    }
+
+    if (query.fromEpochSeconds % bucketSeconds != 0 ||
+        query.toEpochSeconds % bucketSeconds != 0)
+    {
+        resp->setErrorResponse(http::HttpResponse::k400BadRequest,
+                               "unaligned_statistics_range",
+                               "from and to must align to the selected UTC interval");
+        return std::nullopt;
+    }
+    if (query.toEpochSeconds <= query.fromEpochSeconds)
+    {
+        resp->setErrorResponse(http::HttpResponse::k400BadRequest,
+                               "invalid_statistics_range",
+                               "to must be later than from");
+        return std::nullopt;
+    }
+
+    constexpr std::int64_t kSecondsPerDay = 86400;
+    const std::int64_t maxRange =
+        query.interval == shortlink::AccessStatisticsInterval::Hour
+            ? 31 * kSecondsPerDay
+            : 366 * kSecondsPerDay;
+    if (query.toEpochSeconds - query.fromEpochSeconds > maxRange)
+    {
+        resp->setErrorResponse(http::HttpResponse::k400BadRequest,
+                               "statistics_range_too_large",
+                               query.interval == shortlink::AccessStatisticsInterval::Hour
+                                   ? "hour range must not exceed 31 days"
+                                   : "day range must not exceed 366 days");
+        return std::nullopt;
+    }
+    return query;
+}
+
+void handleInternalStatistics(const http::HttpRequest& req,
+                              http::HttpResponse* resp,
+                              const shortlink::AccessStatisticsRepository* repository)
+{
+    const std::optional<shortlink::AccessStatisticsQuery> query =
+        parseStatisticsQuery(req, resp);
+    if (!query)
+    {
+        return;
+    }
+
+    const std::string code = req.getPathParameters("param1");
+    const std::optional<shortlink::AccessStatisticsSnapshot> snapshot =
+        repository->get(code, *query);
+    if (!snapshot)
+    {
+        resp->setErrorResponse(http::HttpResponse::k404NotFound,
+                               "short_link_not_found",
+                               "Short link not found");
+        return;
+    }
+
+    const shortlink::AccessStatisticsSummary& summary = snapshot->summary;
+    const std::string lastAccessAt = summary.lastAccessAtMs
+                                         ? "\"" + formatUtcTimestampMs(*summary.lastAccessAtMs) + "\""
+                                         : "null";
+    const std::string lastAttemptAt = summary.lastAttemptAtMs
+                                          ? "\"" + formatUtcTimestampMs(*summary.lastAttemptAtMs) + "\""
+                                          : "null";
+    std::string body =
+        "{\"code\":\"" + http::utils::escapeJsonString(snapshot->code) +
+        "\",\"consistency\":\"eventual\",\"summary\":{\"access_count\":" +
+        std::to_string(summary.resultCounts[0]) +
+        ",\"attempt_count\":" +
+        std::to_string(shortlink::accessStatisticsAttemptCount(summary.resultCounts)) +
+        ",\"result_counts\":" + statisticsCountsJson(summary.resultCounts) +
+        ",\"last_access_at\":" + lastAccessAt +
+        ",\"last_attempt_at\":" + lastAttemptAt +
+        "},\"trend\":{\"interval\":\"" +
+        shortlink::accessStatisticsIntervalToString(query->interval) +
+        "\",\"from\":\"" +
+        shortlink::ShortLinkService::formatUtcTimestamp(query->fromEpochSeconds) +
+        "\",\"to\":\"" +
+        shortlink::ShortLinkService::formatUtcTimestamp(query->toEpochSeconds) +
+        "\",\"points\":[";
+    for (std::size_t index = 0; index < snapshot->trend.size(); ++index)
+    {
+        if (index > 0)
+        {
+            body += ',';
+        }
+        const shortlink::AccessStatisticsTrendPoint& point = snapshot->trend[index];
+        body += "{\"bucket_start\":\"" +
+                shortlink::ShortLinkService::formatUtcTimestamp(
+                    point.bucketStartEpochSeconds) +
+                "\",\"access_count\":" + std::to_string(point.resultCounts[0]) +
+                ",\"attempt_count\":" +
+                std::to_string(shortlink::accessStatisticsAttemptCount(point.resultCounts)) +
+                ",\"result_counts\":" + statisticsCountsJson(point.resultCounts) + "}";
+    }
+    body += "]}}";
+    setJsonResponse(resp, http::HttpResponse::k200Ok, "OK", body);
+}
+
 void handleHealth(const http::HttpRequest& req, http::HttpResponse* resp)
 {
     (void)req;
@@ -787,6 +974,7 @@ int main(int argc, char* argv[])
             : shortlink::ShortLinkMetrics::Storage::Memory;
     std::unique_ptr<shortlink::ShortLinkRepository> primaryShortLinkRepository;
     std::unique_ptr<shortlink::ShortLinkRepository> shortLinkRepository;
+    std::unique_ptr<shortlink::AccessStatisticsRepository> statisticsRepository;
     std::unique_ptr<shortlink::RateLimiter> rateLimiter;
     std::unique_ptr<shortlink::AccessEventPublisher> accessEventPublisher =
         std::make_unique<shortlink::NoopAccessEventPublisher>();
@@ -799,6 +987,11 @@ int main(int argc, char* argv[])
                                                        static_cast<std::size_t>(config.mysqlPoolSize));
         primaryShortLinkRepository =
             std::make_unique<shortlink::MySqlShortLinkRepository>(&shortLinkMetrics);
+        if (config.statisticsEnabled)
+        {
+            statisticsRepository =
+                std::make_unique<shortlink::MySqlAccessStatisticsRepository>(&shortLinkMetrics);
+        }
         if (config.redisEnabled)
         {
             shortlink::RedisShortLinkCache::Config redisConfig;
@@ -902,6 +1095,16 @@ int main(int argc, char* argv[])
                     [&shortLinkService](const http::HttpRequest& req, http::HttpResponse* resp) {
                         handleInternalDetail(req, resp, &shortLinkService);
                     });
+    if (statisticsRepository)
+    {
+        server.addRoute(
+            http::HttpRequest::kGet,
+            "/internal/short-links/:code/statistics",
+            [repository = statisticsRepository.get()](const http::HttpRequest& req,
+                                                       http::HttpResponse* resp) {
+                handleInternalStatistics(req, resp, repository);
+            });
+    }
     server.addRoute(http::HttpRequest::kPut,
                     "/internal/short-links/:code",
                     [&shortLinkService](const http::HttpRequest& req, http::HttpResponse* resp) {

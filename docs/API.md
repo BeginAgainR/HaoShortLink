@@ -1,7 +1,7 @@
 # API 设计
 
 状态：已建立基础版，持续维护
-当前实现：已实现短链接核心接口，支持内存存储、MySQL 持久化、可选 Redis 查询缓存和可配置的 Prometheus 指标入口
+当前实现：已实现短链接核心接口，支持内存存储、MySQL 持久化、可选 Redis 查询缓存、内部访问统计和可配置的 Prometheus 指标入口
 
 ## 路径命名原则
 
@@ -187,6 +187,52 @@ PUT /internal/short-links/{code}
 
 这组接口不经过 Nginx 公网入口，也不构成完整认证方案；只允许从应用所在主机或可信内部环境调用。
 用户身份、链接归属和正式权限控制留到 v2.0。
+
+## v1.9 内部访问统计接口
+
+当前状态：已实现并完成本地完整 Compose 回归；云端 CI 待分支提交后确认。
+
+```text
+GET /internal/short-links/{code}/statistics
+```
+
+查询参数：
+
+- `interval=hour|day`，默认 `day`。
+- `from` 包含、`to` 不包含，使用 `YYYY-MM-DDTHH:MM:SSZ`。
+- 显式时间必须与所选 UTC 小时或 UTC 天边界对齐。
+- 小时范围最多 31 天，天范围最多 366 天；默认返回对齐后的最近 7 天。
+
+响应中的 `summary` 是全量累计，`trend` 只覆盖请求范围。`access_count` 只统计成功跳转，
+`attempt_count` 包含可关联到该短链的 `success`、`disabled`、`expired` 和 `error` 事件。
+
+```json
+{
+  "code": "000001",
+  "consistency": "eventual",
+  "summary": {
+    "access_count": 12,
+    "attempt_count": 15,
+    "result_counts": {
+      "success": 12,
+      "disabled": 1,
+      "expired": 2,
+      "error": 0
+    },
+    "last_access_at": "2026-07-18T12:00:00.123Z",
+    "last_attempt_at": "2026-07-18T12:00:00.123Z"
+  },
+  "trend": {
+    "interval": "day",
+    "from": "2026-07-12T00:00:00Z",
+    "to": "2026-07-19T00:00:00Z",
+    "points": []
+  }
+}
+```
+
+不存在短链返回 `404`；存在但尚无统计时返回零 summary 和空 trend。接口只在
+`storage.type=mysql` 且 `statistics.enabled=true` 时注册，并继续被默认 Nginx `/internal/` 规则阻断。
 
 ## 可观测性接口
 

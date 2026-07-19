@@ -75,6 +75,7 @@ public:
         Find,
         List,
         Update,
+        Statistics,
         Get,
         Set,
         Delete,

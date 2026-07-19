@@ -162,16 +162,41 @@ std::string serializeAccessEvent(const AccessEvent& event)
 
 std::optional<AccessEvent> parseAccessEvent(const std::string& payload) noexcept
 {
+    return parseAccessEventDetailed(payload).event;
+}
+
+AccessEventParseResult parseAccessEventDetailed(const std::string& payload) noexcept
+{
+    const nlohmann::json parsed = nlohmann::json::parse(payload, nullptr, false);
+    if (parsed.is_discarded())
+    {
+        return { std::nullopt, AccessEventParseError::InvalidJson };
+    }
+
     try
     {
-        const nlohmann::json parsed = nlohmann::json::parse(payload);
-        if (!parsed.is_object() ||
-            !parsed.contains("schema_version") ||
-            !parsed["schema_version"].is_number_integer() ||
-            parsed["schema_version"].get<int>() != kAccessEventSchemaVersion ||
-            !parsed.contains("event_type") ||
-            !parsed["event_type"].is_string() ||
-            parsed["event_type"].get<std::string>() != kAccessEventType ||
+        if (!parsed.is_object())
+        {
+            return { std::nullopt, AccessEventParseError::InvalidContract };
+        }
+        if (!parsed.contains("schema_version") ||
+            !parsed["schema_version"].is_number_integer())
+        {
+            return { std::nullopt, AccessEventParseError::InvalidContract };
+        }
+        if (parsed["schema_version"].get<int>() != kAccessEventSchemaVersion)
+        {
+            return { std::nullopt, AccessEventParseError::UnsupportedSchema };
+        }
+        if (!parsed.contains("event_type") || !parsed["event_type"].is_string())
+        {
+            return { std::nullopt, AccessEventParseError::InvalidContract };
+        }
+        if (parsed["event_type"].get<std::string>() != kAccessEventType)
+        {
+            return { std::nullopt, AccessEventParseError::UnsupportedEventType };
+        }
+        if (
             !parsed.contains("event_id") || !parsed["event_id"].is_string() ||
             !parsed.contains("occurred_at_ms") || !parsed["occurred_at_ms"].is_number_integer() ||
             !parsed.contains("request_id") || !parsed["request_id"].is_string() ||
@@ -179,14 +204,14 @@ std::optional<AccessEvent> parseAccessEvent(const std::string& payload) noexcept
             !parsed.contains("result") || !parsed["result"].is_string() ||
             !parsed.contains("http_status") || !parsed["http_status"].is_number_integer())
         {
-            return std::nullopt;
+            return { std::nullopt, AccessEventParseError::InvalidContract };
         }
 
         const std::optional<AccessEventResult> result =
             parseAccessEventResult(parsed["result"].get<std::string>());
         if (!result)
         {
-            return std::nullopt;
+            return { std::nullopt, AccessEventParseError::InvalidContract };
         }
 
         AccessEvent event;
@@ -198,13 +223,13 @@ std::optional<AccessEvent> parseAccessEvent(const std::string& payload) noexcept
         event.httpStatus = parsed["http_status"].get<int>();
         if (!isValidAccessEvent(event))
         {
-            return std::nullopt;
+            return { std::nullopt, AccessEventParseError::InvalidContract };
         }
-        return event;
+        return { event, AccessEventParseError::None };
     }
     catch (...)
     {
-        return std::nullopt;
+        return { std::nullopt, AccessEventParseError::InvalidContract };
     }
 }
 

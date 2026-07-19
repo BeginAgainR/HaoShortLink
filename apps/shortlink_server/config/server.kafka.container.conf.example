@@ -8,6 +8,7 @@ log.level=INFO
 metrics.enabled=true
 
 storage.type=mysql
+statistics.enabled=true
 mysql.host=tcp://mysql:3306
 mysql.user=hao_shortlink
 mysql.password=hao_shortlink
