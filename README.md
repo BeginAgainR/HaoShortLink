@@ -54,6 +54,7 @@ tests/                      自动化测试和测试脚本
 - [测试计划](docs/TEST_PLAN.md)
 - [压测计划](docs/BENCHMARK.md)
 - [部署计划](docs/DEPLOYMENT.md)
+- [阶段性终点验收](docs/FINAL_ACCEPTANCE.md)
 
 ## 说明
 

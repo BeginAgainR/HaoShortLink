@@ -257,6 +257,7 @@ v1.9 将真实消费副作用落到访问统计：
 - 增加 consumer lag、处理成功 / 失败、重复和 DLQ 指标。
 - 通过新 consumer group 或受控 offset 重置验证事件重放与统计重建。
 
-v2.1 只保留条件候选：如果 v2.0 后需要让其他系统可靠感知链接创建、禁用、恢复或归属变更，评估在这些
-本来就写 MySQL 的生命周期操作上使用 Transactional Outbox。访问事件来自读路径，不计划为每次跳转增加
-Outbox 同步写入。只有出现多个跨语言消费者或频繁 schema 演进后，才评估 Schema Registry。
+v2.2 已规划在链接创建、禁用、恢复、过期时间或归属变更等本来就写 MySQL 的生命周期操作上使用
+Transactional Outbox，并由独立 relay 和生命周期审计 consumer 形成可查询下游。访问事件来自读路径，
+不计划为每次跳转增加 Outbox 同步写入。Schema Registry 不再预分配版本号，只有出现多个跨语言消费者
+或频繁 schema 演进后才作为阶段终点之后的条件 backlog 评估。

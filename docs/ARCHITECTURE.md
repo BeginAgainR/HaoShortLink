@@ -88,6 +88,11 @@ client
 
 ## 后续关注点
 
-- v2.0 补用户、链接归属、权限和管理 API。
-- 只有出现可靠生命周期事件需求后才评估 Outbox；只有出现多语言消费者或频繁 schema 演进后才评估
-  Schema Registry、Avro 或 Protobuf。
+- v2.0 补用户、链接归属、对象级权限、自定义短码、管理 API、最小管理页面和 OpenAPI；同时拆分应用层
+  过大的入口与组合职责，不重写 `HttpServer/`。
+- v2.1 使用 Kubernetes 验证应用工作负载、配置与凭据、健康探针、多副本、滚动发布、故障恢复和可重复演示；
+  第一版不声明生产级有状态集群能力。
+- v2.2 对本来就写 MySQL 的链接生命周期操作使用 Transactional Outbox，由独立 relay 发布，并由生命周期
+  consumer 形成可查询审计投影；访问跳转继续保持异步 fail-open 事件边界。
+- v2.2 完成全链路、迁移、Kubernetes、性能、长稳和干净环境终验后作为阶段性功能冻结点。
+- Schema Registry、RabbitMQ、Go、搜索 / 分析引擎和云基础设施只在出现真实需求后评估，不属于阶段终点。

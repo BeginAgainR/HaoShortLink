@@ -70,6 +70,19 @@ tests/                      自动化测试和测试脚本
 v1.8 事件边界见 `docs/ACCESS_EVENT_DESIGN.md`；v1.9 统计语义、幂等、DLQ 和重放边界见
 `docs/ACCESS_STATISTICS_DESIGN.md`。
 
+## 阶段性终点
+
+当前规划以 v2.2.5 作为阶段性功能冻结点，以下均为尚未实现的计划能力：
+
+- v2.0 补齐用户、会话、链接归属、对象级权限、自定义短码、管理 API、最小管理页面和 OpenAPI，
+  同时收敛应用层结构但不重写 `HttpServer/`。
+- v2.1 将应用工作负载部署到 Kubernetes，验证多副本、配置与凭据、探针、入口、发布 / 回滚、故障恢复和干净环境演示。
+- v2.2 使用 Transactional Outbox 发布生命周期事件，由独立 relay 和 consumer 形成可查询审计投影，
+  并完成全链路、迁移、Kubernetes、性能、长稳和故障终验。
+
+达到 `docs/FINAL_ACCEPTANCE.md` 的完成定义后，项目转入维护、演示和缺陷修复；Go、RabbitMQ、
+Schema Registry、搜索 / 分析引擎与云基础设施只在出现新的真实需求后评估。
+
 ## 文档维护原则
 
 - README 只作为项目入口和文档导航。

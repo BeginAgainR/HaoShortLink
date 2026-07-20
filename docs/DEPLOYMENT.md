@@ -45,6 +45,25 @@ docs/RUNBOOK.md
 - MySQL 和 Redis 依赖说明。
 - 日志和故障排查。
 
+## v2.1 Kubernetes 计划
+
+状态：草案，尚未实现。
+
+第一版聚焦应用工作负载、多副本和可重复演示：
+
+- 固定一种本地 Kubernetes 环境并记录版本和资源；不同时维护多套本地发行版。
+- 部署 `shortlink_server`、`shortlink_event_consumer` 和管理入口，只在 MySQL 持久化模式下验证服务扩容。
+- v2.2 再增加独立 outbox relay 和生命周期审计 consumer 工作负载。
+- 使用 ConfigMap、Secret、Service、liveness / readiness probe 和资源 requests / limits。
+- 在 Ingress 与复用现有 Nginx 之间选择受控入口，继续保护内部 API、`/metrics` 和依赖端口。
+- 保持 Prometheus 可抓取，并验证滚动升级、回滚、Pod 重建、服务多副本和 Kafka consumer group 扩展。
+- 提供明确的启动、健康检查、完整演示和清理入口，在独立干净环境执行成功。
+- MySQL、Redis 和 Kafka 第一版允许使用外部依赖或仅供本地验收的单节点部署，不声明生产高可用。
+- HPA、Helm 和生产级有状态集群运维在基础清单与负载证据稳定后再评估。
+
+阶段终点需要同时保留 Compose 作为轻量本地开发入口和 Kubernetes 作为编排验收入口；Kubernetes
+不是对 Compose 的删除式替换。详细终验见 `docs/FINAL_ACCEPTANCE.md`。
+
 ## v1.2 拆分建议
 
 v1.2 建议继续按小步推进：
