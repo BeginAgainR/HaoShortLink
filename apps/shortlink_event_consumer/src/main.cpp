@@ -393,6 +393,10 @@ private:
         {
             return;
         }
+        if (!committed)
+        {
+            metrics_->setLag(message->partition, 1);
+        }
         std::int64_t low = 0;
         std::int64_t high = 0;
         const rd_kafka_resp_err_t result = rd_kafka_get_watermark_offsets(
