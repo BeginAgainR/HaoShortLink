@@ -1,7 +1,36 @@
 # 测试计划
 
-状态：持续维护；v1.8 Kafka 访问事件本地全量回归和 GitHub Actions 云端 CI 已通过
+状态：持续维护；v1.9 访问统计本地全量、故障、干净目录和 GitHub Actions 云端 CI 均已通过
 当前实现：已建立框架与业务基础测试、API 冒烟、MySQL / Redis 集成、Redis 不可用回退、异常场景、限流、健康语义、Compose 编排、监控冒烟和 Kafka 故障回归入口。
+
+## v2.0-v2.2 验收规划
+
+阶段终点的统一完成定义和测试矩阵见 `docs/FINAL_ACCEPTANCE.md`。后续版本除维护现有 v1.x 回归外，
+按以下顺序增加验证，不等到 v2.2 最后一次性补测试。
+
+### v2.0
+
+- 单元 / 组件测试覆盖密码与会话规则、对象级授权、自定义短码、保留路径和迁移逻辑。
+- API 集成覆盖注册、登录、退出、过期 / 撤销、本人和他人链接权限、管理操作与统计查询。
+- 浏览器 E2E 从管理页面完成登录、创建、跳转、禁用 / 恢复、过期和统计查看。
+- 安全回归覆盖水平越权、弱输入边界、token 泄露、敏感日志和内部接口暴露。
+- 数据库测试同时覆盖空库初始化、v1.9 数据升级、重复迁移和失败回滚。
+
+### v2.1
+
+- 验证 Deployment、Service、ConfigMap、Secret、探针、资源配置和入口暴露边界。
+- 验证服务多副本、consumer group 扩展、滚动升级、回滚和 Pod 删除重建。
+- 在持续请求中执行 Redis、MySQL 或 Kafka 故障，核对 readiness、降级、积压和恢复语义。
+- 在独立干净环境执行启动、演示、检查和清理入口；CI 只承担稳定且耗时可控的子集。
+
+### v2.2
+
+- 验证业务表和 outbox 同事务提交 / 回滚、并发领取、退避重试和优雅停止。
+- 注入“Kafka 发布成功但状态未回写”等崩溃窗口，确认重复投递由 `event_id` 幂等吸收。
+- 验证 Kafka 中断、relay / consumer 重启、积压恢复、历史清理和生命周期审计查询。
+- 完成全量功能、安全、迁移、Compose、Kubernetes、浏览器 E2E、性能、长稳和故障负载终验。
+
+普通 PR 不以环境敏感的性能结果为硬门禁；版本收口必须保存固定环境、配置、数据规模和多轮结果。
 
 ## v1.3 执行顺序
 
@@ -171,6 +200,24 @@ GitHub Actions 独立 Kafka CI job 已通过。
   有界关闭、broker 停止与恢复、队列满、delivery failure、UI localhost 绑定与健康；`error` 异常映射由
   应用层 handler 单元测试覆盖。
 - 完整 Compose、干净目录和 GitHub Actions run `29637356364` 已通过；云端三个 job 均成功。
+
+## v1.9 验证
+
+当前状态：Linux VM 单元构建、完整 Compose / Kafka / MySQL 故障回归、独立干净目录和
+GitHub Actions run `29679640891` 均已通过；云端三个 job 全部成功。
+
+- 当前工作区已通过完整 Compose、Kafka 集成、broker 恢复、MySQL / DLQ 故障、重放和隔离重建验证。
+- 提交对象另在 VM 干净源码目录 `/tmp/haoHTTP-v19-close-src.4IeBqF`、构建目录
+  `/tmp/haoHTTP-v19-close-src.4IeBqF-build` 通过脚本语法检查、Release 构建、CTest 和 API smoke。
+
+- 迁移覆盖 `event_id` 收据、结果累计和 UTC 小时投影；重复事件只保留一份副作用。
+- producer -> Kafka -> consumer -> MySQL -> 内部统计 API 闭环覆盖 success / disabled / expired / ignored。
+- 非法 JSON、schema / contract 错误、key 不匹配和 orphan 使用固定原因进入 DLQ，DLQ 不可用时源 offset 不前移。
+- MySQL 不可用时 consumer 有界重试并非零退出，lag 包含未提交消息；恢复后统计恰好增加一次且 lag 回落。
+- API 覆盖全量 summary、小时趋势、零统计、404、UTC 对齐、interval 和最大范围边界。
+- consumer `/health`、低基数 counters、DLQ、retry、lag 和 last-success 指标已验证。
+- 独立 topic 的同 group offset reset 不改变统计并产生 duplicate 指标；新 group 可向临时数据库重建 retained range。
+- Kafka topic 保留 7 天、DLQ 保留 30 天；该验证不声明超出 retention 的历史可恢复。
 
 ## 测试分层
 

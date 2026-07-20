@@ -8,6 +8,7 @@ log.level=INFO
 metrics.enabled=true
 
 storage.type=memory
+statistics.enabled=false
 redis.enabled=false
 rate_limit.enabled=false
 

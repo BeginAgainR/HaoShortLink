@@ -10,6 +10,7 @@ metrics.enabled=true
 # This file is intended for shortlink_server running in the haoHTTP
 # OrbStack Linux machine while MySQL and Redis run in OrbStack Docker.
 storage.type=mysql
+statistics.enabled=true
 mysql.host=tcp://docker.orb.internal:13306
 mysql.user=hao_shortlink
 mysql.password=hao_shortlink

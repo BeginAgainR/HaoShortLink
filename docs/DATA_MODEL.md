@@ -1,7 +1,7 @@
 # 数据模型
 
 状态：已建立基础版，持续维护
-当前实现：已实现短链生命周期记录、MySQL 持久化和可选 Redis 生命周期查询缓存
+当前实现：已实现短链生命周期记录、MySQL 持久化、可选 Redis 生命周期查询缓存和 v1.9 访问统计投影
 
 ## 说明
 
@@ -115,6 +115,18 @@ shortlink:{code} -> original_url
 - Redis 不可用不应直接导致短链不存在，MySQL 仍是事实来源。
 
 当前状态：MySQL 持久化和 Redis 查询缓存均已接入；Redis 默认关闭，需要通过配置显式启用。
+
+## v1.9 访问统计投影
+
+迁移 `004_create_access_statistics.sql` 新增：
+
+- `processed_access_events`：以 `event_id` 为主键保存来源坐标和处理 disposition，是重放幂等边界。
+- `short_link_access_totals`：以 `(short_link_id, result)` 为主键保存累计次数及最早 / 最近事件时间。
+- `short_link_access_hourly`：以 `(short_link_id, bucket_start_epoch, result)` 为主键保存 UTC 小时桶；天趋势查询时汇总小时数据。
+
+统计表通过 `short_link_id` 外键关联 `short_links.id`。`not_found` 只保存 ignored 收据，不按任意短码创建统计行；
+无法关联的其他结果作为 orphan 进入 DLQ。收据当前不自动清理，因为在仍允许 Kafka retained events 重放时
+删除收据会破坏幂等边界。
 
 ## 待决策
 

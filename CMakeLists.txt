@@ -25,6 +25,7 @@ include_directories(
     ${PROJECT_SOURCE_DIR}
     ${PROJECT_SOURCE_DIR}/HttpServer/include
     ${PROJECT_SOURCE_DIR}/apps/shortlink_server/include
+    ${PROJECT_SOURCE_DIR}/apps/shortlink_event_consumer/include
     /usr/include/mysql-cppconn-8
     /usr/include/mysql
     ${HIREDIS_INCLUDE_DIR}
@@ -53,8 +54,15 @@ add_executable(shortlink_server
 
 add_executable(shortlink_event_consumer
     ${PROJECT_SOURCE_DIR}/apps/shortlink_event_consumer/src/main.cpp
+    ${PROJECT_SOURCE_DIR}/apps/shortlink_event_consumer/src/ConsumerConfig.cpp
+    ${PROJECT_SOURCE_DIR}/apps/shortlink_event_consumer/src/ConsumerMetrics.cpp
+    ${PROJECT_SOURCE_DIR}/apps/shortlink_event_consumer/src/ConsumerObservabilityServer.cpp
+    ${PROJECT_SOURCE_DIR}/apps/shortlink_event_consumer/src/KafkaDeadLetterPublisher.cpp
+    ${PROJECT_SOURCE_DIR}/apps/shortlink_event_consumer/src/MySqlAccessStatisticsWriter.cpp
     ${PROJECT_SOURCE_DIR}/apps/shortlink_server/src/AccessEvent.cpp
+    ${PROJECT_SOURCE_DIR}/apps/shortlink_server/src/AccessStatistics.cpp
     ${PROJECT_SOURCE_DIR}/HttpServer/src/utils/Config.cpp
+    ${PROJECT_SOURCE_DIR}/HttpServer/src/utils/db/DbConnection.cpp
 )
 
 target_link_libraries(shortlink_server
@@ -73,6 +81,8 @@ target_link_libraries(shortlink_server
 target_link_libraries(shortlink_event_consumer
     pthread
     muduo_base
+    mysqlcppconn
+    mysqlclient
     ${RDKAFKA_LIBRARY}
     nlohmann_json::nlohmann_json
 )

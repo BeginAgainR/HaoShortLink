@@ -9,6 +9,12 @@ KCAT_BIN="${HAOHTTP_KCAT_BIN:-kcat}"
 KAFKA_BOOTSTRAP_SERVERS="${HAOHTTP_KAFKA_BOOTSTRAP_SERVERS:-127.0.0.1:19092}"
 UNAVAILABLE_BOOTSTRAP_SERVERS="${HAOHTTP_KAFKA_UNAVAILABLE_BOOTSTRAP_SERVERS:-127.0.0.1:1}"
 TOPIC="${HAOHTTP_KAFKA_TOPIC:-hao-shortlink.access-events.v1}"
+DLQ_TOPIC="${HAOHTTP_KAFKA_DLQ_TOPIC:-hao-shortlink.access-events.dlq.v1}"
+MYSQL_HOST="${HAOHTTP_MYSQL_HOST:-127.0.0.1}"
+MYSQL_PORT="${HAOHTTP_MYSQL_PORT:-13306}"
+MYSQL_USER="${HAOHTTP_MYSQL_USER:-hao_shortlink}"
+MYSQL_PASSWORD="${HAOHTTP_MYSQL_PASSWORD:-hao_shortlink}"
+MYSQL_DATABASE="${HAOHTTP_MYSQL_DATABASE:-hao_shortlink}"
 PORT="${HAOHTTP_KAFKA_TEST_PORT:-18085}"
 BASE_URL="http://127.0.0.1:${PORT}"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/haohttp-kafka-integration.XXXXXX")"
@@ -18,6 +24,7 @@ SERVER_LOG="${TMP_DIR}/shortlink_server.log"
 CONSUMER_LOG="${TMP_DIR}/shortlink_event_consumer.log"
 RESTART_LOG="${TMP_DIR}/shortlink_event_consumer_restart.log"
 TOPIC_DUMP="${TMP_DIR}/topic.txt"
+DLQ_DUMP="${TMP_DIR}/dlq.txt"
 SERVER_PID=""
 CONSUMER_PID=""
 RUN_ID="$(date +%s)-${RANDOM}"
@@ -86,6 +93,15 @@ expect_contains()
     fi
 }
 
+mysql_cmd()
+{
+    MYSQL_PWD="${MYSQL_PASSWORD}" mysql \
+        -h "${MYSQL_HOST}" \
+        -P "${MYSQL_PORT}" \
+        -u "${MYSQL_USER}" \
+        "${MYSQL_DATABASE}" "$@"
+}
+
 wait_for_server()
 {
     for _ in {1..80}; do
@@ -142,6 +158,7 @@ command -v curl >/dev/null 2>&1 || fail "curl is required"
 command -v stdbuf >/dev/null 2>&1 || fail "stdbuf is required"
 command -v timeout >/dev/null 2>&1 || fail "timeout is required"
 command -v "${KCAT_BIN}" >/dev/null 2>&1 || fail "${KCAT_BIN} is required"
+command -v mysql >/dev/null 2>&1 || fail "mysql client is required"
 
 "${KCAT_BIN}" -L -b "${KAFKA_BOOTSTRAP_SERVERS}" -t "${TOPIC}" >/dev/null 2>&1 ||
     fail "Kafka topic ${TOPIC} is not reachable at ${KAFKA_BOOTSTRAP_SERVERS}"
@@ -152,7 +169,13 @@ server.name=HaoShortLinkKafkaIntegration
 server.port=${PORT}
 server.thread_num=2
 metrics.enabled=true
-storage.type=memory
+storage.type=mysql
+statistics.enabled=true
+mysql.host=tcp://${MYSQL_HOST}:${MYSQL_PORT}
+mysql.user=${MYSQL_USER}
+mysql.password=${MYSQL_PASSWORD}
+mysql.database=${MYSQL_DATABASE}
+mysql.pool_size=2
 redis.enabled=false
 rate_limit.enabled=false
 kafka.enabled=true
@@ -232,6 +255,23 @@ consumer.client_id=hao-shortlink-event-consumer-integration-${RUN_ID}
 consumer.auto_offset_reset=earliest
 consumer.poll_timeout_ms=100
 consumer.session_timeout_ms=6000
+consumer.dlq_topic=${DLQ_TOPIC}
+consumer.dlq_client_id=hao-shortlink-access-statistics-dlq-${RUN_ID}
+consumer.dlq_message_timeout_ms=3000
+consumer.dlq_delivery_timeout_ms=5000
+consumer.processing_max_attempts=3
+consumer.retry_initial_ms=100
+consumer.retry_max_ms=500
+consumer.offset_commit_max_attempts=3
+consumer.observability_enabled=true
+consumer.observability_listen_address=127.0.0.1
+consumer.observability_port=19091
+consumer.lag_refresh_ms=200
+consumer.kafka_query_timeout_ms=1000
+mysql.host=tcp://${MYSQL_HOST}:${MYSQL_PORT}
+mysql.user=${MYSQL_USER}
+mysql.password=${MYSQL_PASSWORD}
+mysql.database=${MYSQL_DATABASE}
 EOF
 
 stdbuf -oL -eL "${CONSUMER_BIN}" "${CONSUMER_CONFIG}" > "${CONSUMER_LOG}" 2>&1 &
@@ -239,23 +279,141 @@ CONSUMER_PID="$!"
 sleep 2
 
 consumer_event_id="$(printf '%016x%016x' "$(date +%s)" "${RANDOM}")"
-consumer_payload="{\"schema_version\":1,\"event_type\":\"short_link_access\",\"event_id\":\"${consumer_event_id}\",\"occurred_at_ms\":1784304000999,\"request_id\":\"v18-${RUN_ID}-consumer\",\"code\":\"consumer-${RUN_ID}\",\"result\":\"success\",\"http_status\":302}"
+consumer_payload="{\"schema_version\":1,\"event_type\":\"short_link_access\",\"event_id\":\"${consumer_event_id}\",\"occurred_at_ms\":1784304000999,\"request_id\":\"v19-${RUN_ID}-consumer\",\"code\":\"${code}\",\"result\":\"success\",\"http_status\":302}"
+orphan_code="orphan-${RUN_ID}"
+orphan_event_id="$(printf '%016x%016x' "$(date +%s)" "${RANDOM}")"
+orphan_payload="{\"schema_version\":1,\"event_type\":\"short_link_access\",\"event_id\":\"${orphan_event_id}\",\"occurred_at_ms\":1784304000999,\"request_id\":\"v19-${RUN_ID}-orphan\",\"code\":\"${orphan_code}\",\"result\":\"success\",\"http_status\":302}"
+unsupported_schema_payload='{ "schema_version": 2, "event_type": "short_link_access" }'
 printf '%s\n' \
-    "consumer-${RUN_ID}|${consumer_payload}" \
-    "consumer-${RUN_ID}|${consumer_payload}" \
-    "wrong-key|${consumer_payload}" | \
+    "${code}|${consumer_payload}" \
+    "${code}|${consumer_payload}" \
+    "wrong-key|${consumer_payload}" \
+    "bad-json|not-json" \
+    "${orphan_code}|${orphan_payload}" \
+    "${code}|${unsupported_schema_payload}" | \
     "${KCAT_BIN}" -P -b "${KAFKA_BOOTSTRAP_SERVERS}" -t "${TOPIC}" -K '|'
 
-for _ in {1..100}; do
+for _ in {1..300}; do
     processed_count="$(grep -c "event_id=${consumer_event_id}" "${CONSUMER_LOG}" 2>/dev/null || true)"
-    if [[ "${processed_count}" -ge 2 ]] && grep -q 'reason=key_code_mismatch' "${CONSUMER_LOG}"; then
+    if [[ "${processed_count}" -ge 2 ]] &&
+        grep -q 'reason=key_code_mismatch' "${CONSUMER_LOG}" &&
+        grep -q 'reason=invalid_json' "${CONSUMER_LOG}" &&
+        grep -q 'reason=orphan_short_link' "${CONSUMER_LOG}" &&
+        grep -q 'reason=unsupported_schema' "${CONSUMER_LOG}"; then
         break
     fi
     sleep 0.1
 done
 expect_eq "$(grep -c "event_id=${consumer_event_id}" "${CONSUMER_LOG}" || true)" "2" \
-    "v1.8 consumer should accept duplicate valid events without fake in-memory dedupe"
-grep -q 'reason=key_code_mismatch' "${CONSUMER_LOG}" || fail "consumer did not discard invalid record key"
+    "v1.9 consumer should persist once and identify the duplicate event"
+grep -q 'result=aggregated event_id='"${consumer_event_id}" "${CONSUMER_LOG}" ||
+    fail "consumer did not aggregate the first event"
+grep -q 'result=duplicate event_id='"${consumer_event_id}" "${CONSUMER_LOG}" ||
+    fail "consumer did not identify the duplicate event"
+grep -q 'reason=key_code_mismatch' "${CONSUMER_LOG}" || fail "consumer did not DLQ invalid record key"
+grep -q 'reason=invalid_json' "${CONSUMER_LOG}" || fail "consumer did not DLQ invalid JSON"
+grep -q 'reason=orphan_short_link' "${CONSUMER_LOG}" || fail "consumer did not DLQ orphan event"
+grep -q 'reason=unsupported_schema' "${CONSUMER_LOG}" || fail "consumer did not DLQ unsupported schema"
+
+short_link_id="$(mysql_cmd -N -B -e "SELECT id FROM short_links WHERE code = '${code}' LIMIT 1")"
+[[ -n "${short_link_id}" ]] || fail "MySQL short-link fixture was not found"
+expect_eq "$(mysql_cmd -N -B -e "SELECT access_count FROM short_link_access_totals WHERE short_link_id = ${short_link_id} AND result = 'success'")" \
+    "2" "success statistics should include the redirect and one unique injected event"
+expect_eq "$(mysql_cmd -N -B -e "SELECT access_count FROM short_link_access_totals WHERE short_link_id = ${short_link_id} AND result = 'disabled'")" \
+    "1" "disabled statistics count"
+expect_eq "$(mysql_cmd -N -B -e "SELECT access_count FROM short_link_access_totals WHERE short_link_id = ${short_link_id} AND result = 'expired'")" \
+    "1" "expired statistics count"
+expect_eq "$(mysql_cmd -N -B -e "SELECT COUNT(*) FROM processed_access_events WHERE event_id = '${consumer_event_id}'")" \
+    "1" "duplicate event should have one persistent receipt"
+expect_eq "$(mysql_cmd -N -B -e "SELECT COUNT(*) FROM processed_access_events WHERE event_id = '${orphan_event_id}'")" \
+    "0" "orphan event transaction should roll back its receipt"
+missing_event_id="$(sed -n 's/.*\"event_id\":\"\([^\"]*\)\".*/\1/p' <<< "${missing_record}")"
+[[ -n "${missing_event_id}" ]] || fail "missing event ID could not be extracted"
+missing_disposition=""
+for _ in {1..200}; do
+    missing_disposition="$(mysql_cmd -N -B -e "SELECT disposition FROM processed_access_events WHERE event_id = '${missing_event_id}'")"
+    [[ -n "${missing_disposition}" ]] && break
+    sleep 0.1
+done
+expect_eq "${missing_disposition}" \
+    "not_found_ignored" "not-found event should keep only an ignored receipt"
+echo "PASS: MySQL transaction, aggregate, duplicate and not-found semantics"
+
+statistics_body="$(curl -fsS \
+    "${BASE_URL}/internal/short-links/${code}/statistics?interval=hour&from=2026-07-17T16:00:00Z&to=2026-07-17T17:00:00Z")"
+expect_contains "${statistics_body}" '"consistency":"eventual"' \
+    "statistics consistency contract"
+expect_contains "${statistics_body}" '"access_count":2,"attempt_count":4' \
+    "statistics summary counts"
+expect_contains "${statistics_body}" \
+    '"result_counts":{"success":2,"disabled":1,"expired":1,"error":0}' \
+    "statistics result breakdown"
+expect_contains "${statistics_body}" \
+    '"bucket_start":"2026-07-17T16:00:00Z","access_count":1,"attempt_count":1' \
+    "hourly statistics trend"
+day_statistics_body="$(curl -fsS \
+    "${BASE_URL}/internal/short-links/${code}/statistics?interval=day&from=2026-07-17T00:00:00Z&to=2026-07-18T00:00:00Z")"
+expect_contains "${day_statistics_body}" \
+    '"bucket_start":"2026-07-17T00:00:00Z","access_count":1,"attempt_count":1' \
+    "daily statistics trend"
+expect_eq "$(curl -sS -o /dev/null -w '%{http_code}' \
+    "${BASE_URL}/internal/short-links/${code}/statistics?interval=week")" \
+    "400" "statistics interval validation"
+expect_eq "$(curl -sS -o /dev/null -w '%{http_code}' \
+    "${BASE_URL}/internal/short-links/${code}/statistics?interval=hour&from=2026-07-17T16:00:01Z&to=2026-07-17T17:00:00Z")" \
+    "400" "statistics bucket alignment validation"
+expect_eq "$(curl -sS -o /dev/null -w '%{http_code}' \
+    "${BASE_URL}/internal/short-links/${code}/statistics?interval=hour&from=2026-01-01T00:00:00Z&to=2026-02-02T00:00:00Z")" \
+    "400" "statistics maximum range validation"
+expect_eq "$(curl -sS -o /dev/null -w '%{http_code}' \
+    "${BASE_URL}/internal/short-links/missing-${RUN_ID}/statistics")" \
+    "404" "missing short-link statistics"
+expect_contains "$(curl -fsS "${BASE_URL}/metrics")" \
+    'haohttp_shortlink_backend_errors_total{backend="mysql",operation="statistics"} 0' \
+    "statistics backend metric"
+expect_eq "$(curl -sS -o "${body_file}" -w '%{http_code}' \
+    -H 'Content-Type: application/json' \
+    -d "{\"url\":\"https://example.com/no-statistics-${RUN_ID}\"}" \
+    "${BASE_URL}/api/short-links")" "201" "create short link without access events"
+empty_statistics_code="$(sed -n 's/.*"code":"\([^"]*\)".*/\1/p' "${body_file}")"
+[[ -n "${empty_statistics_code}" ]] || fail "empty-statistics fixture did not contain a code"
+empty_statistics_body="$(curl -fsS \
+    "${BASE_URL}/internal/short-links/${empty_statistics_code}/statistics")"
+expect_contains "${empty_statistics_body}" '"access_count":0,"attempt_count":0' \
+    "existing short link with no statistics"
+expect_contains "${empty_statistics_body}" '"points":[]' \
+    "existing short link should return an empty trend"
+echo "PASS: internal statistics API summary, UTC trend and validation boundaries"
+
+expect_contains "$(curl -fsS http://127.0.0.1:19091/health)" '"status":"up"' \
+    "consumer health endpoint"
+consumer_metrics="$(curl -fsS http://127.0.0.1:19091/metrics)"
+for result in aggregated duplicate ignored dlq; do
+    value="$(awk -v result="${result}" \
+        '$0 ~ "messages_total\\{result=\\\"" result "\\\"\\}" { print $NF; exit }' \
+        <<< "${consumer_metrics}")"
+    [[ "${value:-0}" -ge 1 ]] || fail "consumer ${result} metric did not advance"
+done
+last_success="$(awk '/haohttp_shortlink_access_consumer_last_success_unixtime [0-9]+/ { print $NF; exit }' \
+    <<< "${consumer_metrics}")"
+[[ "${last_success:-0}" -gt 0 ]] || fail "consumer last-success metric did not advance"
+if grep -E 'topic=|code=|event_id=|request_id=' <<< "${consumer_metrics}" >/dev/null; then
+    fail "consumer metrics exposed a high-cardinality label"
+fi
+echo "PASS: consumer health and low-cardinality metrics"
+
+timeout 15s "${KCAT_BIN}" -C -e -q -b "${KAFKA_BOOTSTRAP_SERVERS}" -t "${DLQ_TOPIC}" \
+    -o beginning -f '%k|%s\n' > "${DLQ_DUMP}" || fail "failed to read access event DLQ"
+grep -q '"reason":"key_code_mismatch"' "${DLQ_DUMP}" ||
+    fail "DLQ did not contain key/code mismatch"
+grep -q '"reason":"invalid_json"' "${DLQ_DUMP}" ||
+    fail "DLQ did not contain invalid JSON"
+grep -q '"reason":"orphan_short_link"' "${DLQ_DUMP}" ||
+    fail "DLQ did not contain orphan short link"
+grep -q '"reason":"unsupported_schema"' "${DLQ_DUMP}" ||
+    fail "DLQ did not contain unsupported schema"
+echo "PASS: permanent invalid events reach the DLQ before source offsets commit"
+
 consumer_shutdown_start="${SECONDS}"
 stop_consumer || fail "consumer shutdown exceeded its 8s bound"
 consumer_shutdown_elapsed="$(( SECONDS - consumer_shutdown_start ))"
@@ -267,7 +425,7 @@ stop_consumer || fail "restarted consumer shutdown exceeded its 8s bound"
 if grep -q 'stage=process result=' "${RESTART_LOG}"; then
     fail "consumer replayed already committed records after restart"
 fi
-echo "PASS: consumer duplicate boundary, discard, manual offset, restart and bounded shutdown=${consumer_shutdown_elapsed}s"
+echo "PASS: consumer idempotency, DLQ, manual offset, restart and bounded shutdown=${consumer_shutdown_elapsed}s"
 
 stop_server
 cat > "${SERVER_CONFIG}" <<EOF

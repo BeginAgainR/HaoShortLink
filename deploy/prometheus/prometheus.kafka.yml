@@ -1,0 +1,16 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: hao-shortlink
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - shortlink_server:8080
+
+  - job_name: hao-shortlink-access-consumer
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - shortlink_event_consumer:9091

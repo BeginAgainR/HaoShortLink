@@ -10,6 +10,8 @@ metrics.enabled=true
 # storage.type supports memory or mysql.
 # MySQL storage requires the short_links table.
 storage.type=memory
+# Internal statistics API; requires storage.type=mysql and migration 004.
+statistics.enabled=false
 mysql.host=tcp://127.0.0.1:3306
 mysql.user=hao_shortlink
 mysql.password=change_me

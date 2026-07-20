@@ -1,4 +1,8 @@
 services:
+  prometheus:
+    volumes:
+      - ./deploy/prometheus/prometheus.kafka.yml:/etc/prometheus/prometheus.yml:ro
+
   shortlink_server:
     command:
       - ./shortlink_server
@@ -43,21 +47,27 @@ services:
       kafka:
         condition: service_healthy
     command:
-      - /opt/kafka/bin/kafka-topics.sh
-      - --bootstrap-server
-      - kafka:29092
-      - --create
-      - --if-not-exists
-      - --topic
-      - hao-shortlink.access-events.v1
-      - --partitions
-      - "3"
-      - --replication-factor
-      - "1"
-      - --config
-      - cleanup.policy=delete
-      - --config
-      - retention.ms=604800000
+      - /bin/bash
+      - -ec
+      - |
+        /opt/kafka/bin/kafka-topics.sh \
+          --bootstrap-server kafka:29092 \
+          --create \
+          --if-not-exists \
+          --topic hao-shortlink.access-events.v1 \
+          --partitions 3 \
+          --replication-factor 1 \
+          --config cleanup.policy=delete \
+          --config retention.ms=604800000
+        /opt/kafka/bin/kafka-topics.sh \
+          --bootstrap-server kafka:29092 \
+          --create \
+          --if-not-exists \
+          --topic hao-shortlink.access-events.dlq.v1 \
+          --partitions 3 \
+          --replication-factor 1 \
+          --config cleanup.policy=delete \
+          --config retention.ms=2592000000
     restart: "no"
 
   kafka_ui:
@@ -79,10 +89,18 @@ services:
     depends_on:
       kafka_topic_init:
         condition: service_completed_successfully
+      mysql:
+        condition: service_healthy
     command:
       - ./shortlink_event_consumer
       - apps/shortlink_event_consumer/config/consumer.container.conf.example
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9091/health >/dev/null || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
 
 volumes:
   hao_shortlink_kafka_data:
