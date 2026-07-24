@@ -2,6 +2,9 @@
 
 状态：v1.9 已完成；本地全量、故障、独立干净目录和 GitHub Actions 云端 CI 均已通过
 
+v2.0 说明：本文保留 v1.9 的投影与恢复设计。统计查询已经从 `/internal/short-links/{code}/statistics`
+迁移为需要登录并执行 owner 授权的 `/api/short-links/{code}/statistics`；Kafka、幂等、DLQ 和重放边界不变。
+
 ## 业务目标
 
 v1.9 将 v1.8 的访问事件写成可查询的 MySQL 统计投影：

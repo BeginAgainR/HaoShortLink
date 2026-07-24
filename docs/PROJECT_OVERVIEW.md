@@ -1,91 +1,78 @@
 # 项目概览
 
-状态：已建立基础版，持续维护
-当前实现：已实现短链闭环、MySQL / Redis、生命周期、流量保护、可观测性、Kafka 访问事件管道和 MySQL 访问统计投影；v1.9 本地全量回归和 GitHub Actions 云端 CI 已通过
+状态：v2.0 产品闭环已实现，等待最终发布分支 CI 结果
 
 ## 项目定位
 
-HaoShortLink 是一个基于 muduo 网络库的 C++17 HTTP 框架项目。当前目标是在保持
-`HttpServer/` 框架层稳定的基础上，在上层逐步构建短链接后端服务，并以短链接业务为载体
-引入持久化、缓存、反向代理、测试、压测、可观测性、限流和消息队列等常见后端工程能力。
+HaoShortLink 是一个基于 muduo 的 C++17 HTTP 框架项目。`HttpServer/` 提供请求解析、路由、
+中间件和响应等通用能力；`apps/shortlink_server/` 在其上实现可直接使用的短链接服务。
 
-## 当前状态
+项目重点不是不断增加技术栈，而是让已经引入的 MySQL、Redis、Kafka、Nginx、Prometheus 和 Grafana
+具有明确职责、故障边界和可重复验证证据。
 
-- 旧五子棋业务代码已经清理。
-- `HttpServer/` 保留为现有 HTTP 框架层，暂时不重命名。
-- `apps/shortlink_server/` 是新的短链接业务服务目录。
-- `apps/shortlink_server/` 已实现健康检查、创建短链接和短码跳转。
-- 短链接存储支持内存版和 MySQL 版。
-- MySQL 版支持可选 Redis 查询缓存。
-- 已完成本地 Docker Compose 验证，可启动 MySQL、Redis、`shortlink_server` 和 Nginx。
-- v1.3 已完成第一版测试与 CI 收口，包含第一批 CTest、API 冒烟测试、MySQL / Redis 集成测试脚本和 CI 第一版 workflow。
-- CI 第一版核心命令链路已在 Linux VM 中验证，GitHub Actions 云端 CI 已通过。
-- v1.4 已完成 curl / `hey` 多模式基线、关键异常场景、Redis 环境问题定性和 Nginx 入口底线验证。
-- v1.5 已完成 request ID、结构化请求日志、HTTP / 短链指标、Prometheus、Grafana、六面板 dashboard 和监控链路 CI 冒烟验证。
-- v1.6 已实现可配置的 Redis Lua 全局创建限流、fail-open、liveness / readiness 和保护性测试；GitHub Actions 云端 CI 已通过。
-- v1.7 已实现 `active` / `disabled` 状态、可选过期时间、内部详情 / 分页 / 更新接口、Redis 生命周期缓存和失效测试；本地全量回归和 GitHub Actions 云端 CI 已通过。
-- v1.8 已实现 Kafka 访问事件、异步 fail-open producer、独立 consumer、本地 KRaft / Kafka UI 编排、观测和故障验证。
-- v1.9 已实现 MySQL 幂等统计投影、内部统计查询、重试 / DLQ、consumer 健康与 lag、受控重放和隔离重建；本地全量回归和 GitHub Actions 云端 CI 已通过。
-- 完整部署方案尚未实现。
-- 已完成请求日志、统一 JSON 错误响应、JSON 响应辅助和配置加载等框架基础能力。
-- MySQL / Redis 依赖集成、监控冒烟、限流和健康语义测试已配置进入 CI。
+## v2.0 产品闭环
 
-## 目录结构
+普通用户可以：
+
+1. 使用用户名和密码注册或登录。
+2. 创建随机短码或自定义短码。
+3. 只查看自己的短链接列表和详情。
+4. 禁用、恢复或修改过期时间。
+5. 查看由 Kafka 访问事件异步生成的统计。
+
+公共访问者无需登录即可访问 `GET /s/{code}`。不存在、禁用和过期链接对公网统一返回 `404`。
+
+v2.0 只有普通用户，不实现平台管理员、跨用户管理或 RBAC。“管理 API / 管理页面”指普通用户对自己
+链接的对象级管理。v1.9 历史链接归属禁用的 `legacy-system` 账号，不允许普通用户自动认领。
+
+## 当前架构能力
+
+- MySQL 保存用户、会话摘要、链接、owner 和访问统计，是持久化模式的事实存储。
+- Redis 是可选查询缓存和可选全局创建限流；故障时按既定回源 / fail-open 语义降级。
+- Kafka producer 对跳转路径保持异步 fail-open；consumer 通过 `event_id` 和 MySQL 事务形成幂等统计投影。
+- Nginx 提供同源 `/app/` 页面、`/api/` 和 `/s/` 入口，并阻断 `/internal/` 与 `/metrics`。
+- Prometheus / Grafana 提供请求、缓存、后端错误、限流和事件链路观测。
+- Compose 使用独立一次性 migration 服务，不把 schema 变更绑定到 HTTP 进程启动。
+
+## 应用结构
 
 ```text
-HttpServer/
-  include/                  框架头文件
-  src/                      框架实现
-  examples/                 框架示例或测试客户端
+apps/shortlink_server/
+  include/shortlink/       配置、认证、repository、service 和 HTTP API 接口
+  src/                     应用实现与依赖组装
+  sql/                     001-005 顺序迁移和 v2.0 回滚脚本
+  config/                  本地、容器和 Kafka 配置样例
+  web/                     无构建链的同源管理页面
 
-apps/
-  shortlink_server/
-    include/                短链接业务头文件预留目录
-    src/                    短链接服务入口和业务实现目录
-    config/                 配置文件预留目录
-    sql/                    数据库脚本预留目录
-  shortlink_event_consumer/
-    include/                consumer 配置、统计写入、DLQ 和观测组件
-    src/                    独立 Kafka consumer 入口
-    config/                 consumer 配置样例
+apps/shortlink_event_consumer/
+  include/                 consumer、统计写入、DLQ 和观测组件
+  src/                     独立消费进程
+  config/                  consumer 配置样例
 
-docs/                       公开项目文档
-deploy/nginx/               Nginx 本地反向代理配置
-deploy/prometheus/          Prometheus 本地抓取配置
-deploy/grafana/             Grafana 数据源和 dashboard provisioning
-tests/                      自动化测试和测试脚本
-.github/workflows/          GitHub Actions workflow
+HttpServer/                保持业务无关的 HTTP 框架层
+deploy/                    本地入口与监控配置
+tests/                     CTest、API、依赖、故障、迁移和契约验证
 ```
 
-## 当前不包含的能力
+`main.cpp` 只负责信号处理、配置读取、依赖组装和启动；认证与 HTTP handler 已拆入应用层组件。
+v2.0 没有修改 `HttpServer/`。
 
-以下能力尚未实现，不应在公开文档中描述为已完成：
+## 已验证边界
 
-- 生产告警和长期容量规划
-- 公开统计 API、独立访客、地理位置或 Referer 等分析维度
-- 用户系统
-- 后台管理
-- 告警策略
+- 密码使用 OpenSSL scrypt；数据库不保存明文密码或原始会话 token。
+- 会话固定过期、可撤销，账号禁用后旧会话失效；浏览器状态修改请求执行同源检查。
+- owner 条件进入 repository / SQL 查询；对象不存在和跨 owner 访问统一返回 `404`。
+- 用户名和自定义短码并发冲突由数据库唯一约束裁决。
+- 空库初始化、v1.9 原地升级、历史 owner 回填、重复迁移和显式回滚已覆盖。
+- v1.9 的 Redis 降级、健康语义、监控、Kafka fail-open、统计幂等、DLQ 和重放边界保持有效。
 
-v1.8 事件边界见 `docs/ACCESS_EVENT_DESIGN.md`；v1.9 统计语义、幂等、DLQ 和重放边界见
-`docs/ACCESS_STATISTICS_DESIGN.md`。
+详细证据见 [v2.0 验收记录](V2_ACCEPTANCE.md)。
 
-## 阶段性终点
+## 当前不包含
 
-当前规划以 v2.2.5 作为阶段性功能冻结点，以下均为尚未实现的计划能力：
-
-- v2.0 补齐用户、会话、链接归属、对象级权限、自定义短码、管理 API、最小管理页面和 OpenAPI，
-  同时收敛应用层结构但不重写 `HttpServer/`。
-- v2.1 将应用工作负载部署到 Kubernetes，验证多副本、配置与凭据、探针、入口、发布 / 回滚、故障恢复和干净环境演示。
-- v2.2 使用 Transactional Outbox 发布生命周期事件，由独立 relay 和 consumer 形成可查询审计投影，
-  并完成全链路、迁移、Kubernetes、性能、长稳和故障终验。
-
-达到 `docs/FINAL_ACCEPTANCE.md` 的完成定义后，项目转入维护、演示和缺陷修复；Go、RabbitMQ、
-Schema Registry、搜索 / 分析引擎与云基础设施只在出现新的真实需求后评估。
-
-## 文档维护原则
-
-- README 只作为项目入口和文档导航。
-- 详细设计、路线、问题和运行说明放在 `docs/`。
-- 未实现能力使用“草案”“计划”“暂缓”“尚未实现”等状态标注。
-- 文档应随着项目实现和验证结果持续更新。
+- 平台管理员、用户运营后台、链接转移或跨用户查询。
+- 邮箱、验证码、密码找回、OIDC、邀请、计费和自定义域名。
+- HTTPS/TLS 终止和生产发布方案。
+- Kubernetes 多副本验收；该范围属于 v2.1。
+- Transactional Outbox 和生命周期审计投影；该范围属于 v2.2。
+- 生产级 MySQL、Redis 或 Kafka 集群运维和 SLA 承诺。

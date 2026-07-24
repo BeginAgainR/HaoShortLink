@@ -1,62 +1,66 @@
 # HaoShortLink
 
-HaoShortLink 是一个基于 muduo 网络库的 C++17 HTTP 框架项目，当前目标是在现有
-`HttpServer/` 框架层之上，逐步构建短链接后端服务，并以该业务为载体引入常见后端工程能力。
+HaoShortLink 是一个基于 muduo 网络库的 C++17 HTTP 框架与短链接服务项目。项目在保持
+`HttpServer/` 通用框架层稳定的前提下，通过真实短链接业务验证持久化、缓存、权限、异步事件、
+可观测性、故障恢复和工程化测试。
 
-## 当前状态
+## 当前能力
 
-- `HttpServer/` 是现有可复用 HTTP 框架层，暂时保持目录名不变。
-- `apps/shortlink_server/` 是短链接业务服务目录，已实现健康检查、创建短链接和短码跳转。
-- v1.1 已接入 MySQL 持久化和可选 Redis 查询缓存。
-- v1.2 工程化运行已完成本地 Docker Compose 验证，可启动 MySQL、Redis、`shortlink_server` 和 Nginx。
-- v1.3 已完成第一版测试与 CI 收口，包含第一批 CTest、API 冒烟测试、MySQL / Redis 集成测试脚本和 CI 第一版 workflow；GitHub Actions 云端 CI 已通过。
-- v1.4 已完成性能与稳定性收口，建立 curl / `hey` 多模式基线，覆盖关键异常场景并验证 Nginx 入口；本地结果不作为生产承载承诺。
-- v1.5 已完成可观测性收口，覆盖 request ID、通用结构化请求日志、基础 HTTP / 短链指标、`/metrics`、本地 Prometheus / Grafana、最小 dashboard 和监控链路 CI 冒烟验证。
-- v1.6 已完成 Redis Lua 全局创建限流、fail-open、liveness / readiness、保护性测试和 GitHub Actions 云端 CI 收口。
-- v1.7 已完成链接状态、过期时间、内部详情 / 列表 / 更新接口、生命周期缓存失效、本地全量回归和 GitHub Actions 云端 CI 验证。
-- v1.8 已完成版本化访问事件、librdkafka 异步 fail-open producer、独立 consumer、Kafka KRaft / Kafka UI Compose overlay、故障测试和 GitHub Actions 云端 Kafka CI 验证。
-- v1.9 已完成 MySQL 幂等统计投影、内部统计查询、重试 / DLQ、consumer 健康与 lag、受控重放和隔离重建；本地全量、故障、独立干净目录和 GitHub Actions 云端 CI 均已通过。
-- MySQL / Redis 依赖集成和 Prometheus / Grafana 监控冒烟已进入 CI；代表性 `hey` 小基线已完成 v1.4.0 / v1.5 相对回归，本地结果不作为生产承载承诺。
-- 旧五子棋业务代码已经清理，旧图片资源已移除。
-- 已完成请求日志、统一 JSON 错误响应、JSON 响应辅助和配置加载等框架基础能力。
-- 构建验证在 Linux 虚拟机或容器环境中进行，不在 Mac 宿主机上构建。
+- 用户名 / 密码注册和登录，服务端持久化 `HttpOnly` Cookie 会话。
+- 用户只能创建、查询和修改自己的短链接；匿名访问者仍可使用短码跳转。
+- 随机短码、自定义短码、大小写敏感唯一约束、禁用 / 恢复和过期时间。
+- `/app/` 同源静态管理页面，覆盖登录、创建、列表、生命周期和访问统计。
+- MySQL 事实存储、可选 Redis 查询缓存和可选 Redis 全局创建限流。
+- 可选 Kafka 访问事件、独立 consumer、MySQL 幂等统计投影、重试、DLQ、lag 和受控重放。
+- liveness / readiness、结构化请求日志、Prometheus 指标和 Grafana dashboard。
+- Docker Compose、Nginx、OpenAPI、CTest、API / 依赖 / 故障集成测试和 GitHub Actions workflow。
+
+v2.0 不包含平台管理员、跨用户管理、RBAC、邮箱找回、计费、自定义域名或复杂前端工程。管理页面是
+普通用户管理自己链接的入口。Kubernetes 和 Transactional Outbox 分别属于后续 v2.1、v2.2。
+
+## 快速体验
+
+本地 Compose 会先执行 schema migration，再启动 MySQL、Redis、服务、Nginx、Prometheus 和 Grafana：
+
+```bash
+docker compose up -d --build
+```
+
+入口：
+
+- 管理页面：`http://127.0.0.1:8080/app/`
+- OpenAPI：`http://127.0.0.1:8080/openapi.yaml`
+- 健康检查：`http://127.0.0.1:8080/api/health`
+- Prometheus：`http://127.0.0.1:9090`
+- Grafana：`http://127.0.0.1:3000`
+
+完整启动、迁移、配置和故障处理步骤见 [运行手册](docs/RUNBOOK.md)。项目在 Linux VM 或 Linux
+容器中构建和验证，不在 Mac 宿主机上生成构建产物。
 
 ## 项目结构
 
 ```text
-HttpServer/                 现有 HTTP 框架层
-apps/shortlink_server/      短链接业务服务目录
-apps/shortlink_event_consumer/ 独立访问事件消费者
-deploy/nginx/               Nginx 本地反向代理配置
-deploy/prometheus/          Prometheus 本地抓取配置
-deploy/grafana/             Grafana 数据源和 dashboard provisioning
-docs/                       公开项目文档
-tests/                      自动化测试和测试脚本
+HttpServer/                     通用 HTTP 框架层
+apps/shortlink_server/          HTTP 应用、认证、短链业务与静态页面
+apps/shortlink_event_consumer/  Kafka 访问事件消费者与统计投影
+deploy/                         Nginx、Prometheus 和 Grafana 配置
+docs/                           设计、契约、运行和验收文档
+tests/                          单元、集成、故障和契约测试
 ```
 
 ## 文档
 
 - [项目概览](docs/PROJECT_OVERVIEW.md)
+- [v2.0 产品闭环设计](docs/PRODUCT_DESIGN.md)
+- [API 说明](docs/API.md) / [OpenAPI 契约](docs/openapi.yaml)
 - [架构说明](docs/ARCHITECTURE.md)
+- [数据模型](docs/DATA_MODEL.md)
 - [路线图](docs/ROADMAP.md)
 - [决策记录](docs/DECISIONS.md)
-- [已知问题](docs/BUGS.md)
-- [短链接需求](docs/SHORTLINK_REQUIREMENTS.md)
-- [API 设计](docs/API.md)
-- [数据模型](docs/DATA_MODEL.md)
-- [中间件设计](docs/MIDDLEWARE_DESIGN.md)
-- [可观测性设计](docs/OBSERVABILITY_DESIGN.md)
-- [可靠性与流量保护设计](docs/RELIABILITY_DESIGN.md)
-- [链接生命周期设计](docs/LIFECYCLE_DESIGN.md)
-- [访问事件与 Kafka 设计](docs/ACCESS_EVENT_DESIGN.md)
-- [访问统计设计](docs/ACCESS_STATISTICS_DESIGN.md)
 - [运行手册](docs/RUNBOOK.md)
+- [部署边界](docs/DEPLOYMENT.md)
 - [测试计划](docs/TEST_PLAN.md)
-- [压测计划](docs/BENCHMARK.md)
-- [部署计划](docs/DEPLOYMENT.md)
+- [v2.0 验收记录](docs/V2_ACCEPTANCE.md)
 - [阶段性终点验收](docs/FINAL_ACCEPTANCE.md)
 
-## 说明
-
-当前短链接服务支持内存存储、MySQL 持久化、可选 Redis 查询缓存、可选 Redis 全局创建限流、链接生命周期、可选 Kafka 访问事件和 MySQL 访问统计投影。v1.9 统计 API 保持内部边界，统计异步可见；producer fail-open 和 7 天 topic retention 仍决定事件完整性与可重建范围。
-未实现内容会在 `docs/` 中以“草案”“计划”或“暂缓”的形式记录，避免将未来能力描述为已完成能力。
+其余专题设计位于 `docs/`。未实现能力会明确标记为计划或非目标，不作为当前能力宣传。

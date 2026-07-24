@@ -1,7 +1,7 @@
 # 测试计划
 
-状态：持续维护；v1.9 访问统计本地全量、故障、干净目录和 GitHub Actions 云端 CI 均已通过
-当前实现：已建立框架与业务基础测试、API 冒烟、MySQL / Redis 集成、Redis 不可用回退、异常场景、限流、健康语义、Compose 编排、监控冒烟和 Kafka 故障回归入口。
+状态：持续维护；v2.0 本地功能、迁移、依赖、故障和浏览器验收已通过
+当前实现：已覆盖框架与业务单元、认证 / owner API、MySQL / Redis、迁移、限流、健康、Compose、管理页面、OpenAPI、监控和 Kafka 故障回归。
 
 ## v2.0-v2.2 验收规划
 
@@ -10,11 +10,23 @@
 
 ### v2.0
 
-- 单元 / 组件测试覆盖密码与会话规则、对象级授权、自定义短码、保留路径和迁移逻辑。
-- API 集成覆盖注册、登录、退出、过期 / 撤销、本人和他人链接权限、管理操作与统计查询。
-- 浏览器 E2E 从管理页面完成登录、创建、跳转、禁用 / 恢复、过期和统计查看。
-- 安全回归覆盖水平越权、弱输入边界、token 泄露、敏感日志和内部接口暴露。
-- 数据库测试同时覆盖空库初始化、v1.9 数据升级、重复迁移和失败回滚。
+状态：已完成本地验收。
+
+- 单元 / 组件测试已覆盖 scrypt、用户名 / 密码、token 摘要、固定会话过期、同源策略、owner、生命周期、
+  自定义短码和保留路径。
+- API smoke 已覆盖注册、登录、退出、Cookie、当前用户、认证创建、自定义短码、分页、生命周期、错误和
+  registration disabled。
+- MySQL / Redis 集成已覆盖密码与 token 不明文落库、用户名 / 短码并发冲突、owner 隔离、会话跨进程重启、
+  过期、撤销、禁用账号、缓存 v2 与 Redis fallback。
+- 独立迁移验证已覆盖空库、真实 v1.9 schema 升级、历史 owner 回填、重复执行和显式回滚。
+- 实际浏览器已从 `/app/` 完成注册、创建自定义短码、筛选、禁用 / 恢复、过期修改、统计、冲突反馈、
+  退出 / 登录和匿名跳转。
+- Kafka 完整包装测试已覆盖 producer、consumer、owner 统计授权、MySQL 恢复、DLQ 失败恢复、broker 恢复、
+  受控重放和隔离重建。
+- OpenAPI 契约测试从 C++ 注册点提取公开路由，与 13 个文档 method/path 做精确集合比较。
+
+本地浏览器验收使用真实应用 UI，目前不在 CI 中引入浏览器自动化和 Node.js 工具链。其余稳定、可重复且
+耗时可控的 v2.0 回归已经进入现有 CI job。完整命令与证据见 `docs/V2_ACCEPTANCE.md`。
 
 ### v2.1
 
@@ -70,14 +82,15 @@ v1.3 的目标是把当前手工验证沉淀为可重复执行的测试体系，
 
 ## CI 当前方案
 
-当前 CI 在第一版 Linux 构建、CTest 和 API smoke 基础上，增加脚本语法、MySQL / Redis 依赖集成和独立监控冒烟验证。
+当前 CI 在 Linux 构建、CTest 和认证 API smoke 基础上，增加脚本语法、OpenAPI 路由契约、MySQL / Redis
+依赖集成、独立监控 / 管理页面冒烟和 Kafka 故障回归。
 
 当前 workflow：`.github/workflows/ci.yml`。
 
 触发范围：
 
-- 推送到主线分支、`refactor/**`、`feature/**` 或 `codex/**` 开发分支时执行。
-- 发起 pull request 时执行。
+- 推送到主线分支、`refactor/**` 或 `feature/**` 开发分支时执行。
+- 其他开发分支通过面向主线的 pull request 触发。
 
 当前覆盖：
 
@@ -85,17 +98,20 @@ v1.3 的目标是把当前手工验证沉淀为可重复执行的测试体系，
 - 准备 `muduo_base` 和 `muduo_net`。
 - 执行 CMake 配置和构建。
 - 执行 CTest，覆盖框架基础测试、短链业务纯逻辑测试、request ID 和指标并发更新 / Prometheus 文本渲染。
-- 执行 API 冒烟测试，使用内存存储模式验证健康检查、创建短链、短码跳转、基础错误响应和可配置 `/metrics`。
+- 执行 API 冒烟测试，使用内存存储模式验证注册 / 登录、认证后创建、owner 管理、短码跳转、错误响应和可配置 `/metrics`。
+- 校验 OpenAPI 3.1 文档、Cookie security scheme，以及全部公开服务路由 method/path 集合。
 - 检查 `tests/scripts/*.sh` 的 Bash 语法。
 - 通过 Docker Compose 启动 MySQL、Redis，执行持久化、缓存回填和 Redis 不可用 fallback 测试。
 - 执行 Redis Lua 固定窗口、并发原子性、fail-open、MySQL 存储与查询缓存开关独立性测试。
 - 在运行中停止和恢复 MySQL，验证 liveness / readiness 故障与恢复语义。
 - 通过独立并行 job 启动完整 Compose，验证 Nginx、Prometheus scrape / 查询、Grafana datasource / dashboard、`/metrics` 暴露边界以及 Prometheus / Grafana 容器重建后的数据恢复。
 - 在监控 job 内经 Nginx 验证 `429`、`Retry-After`、健康入口和限流指标。
+- 在独立 Kafka job 验证 producer / consumer、统计权限、重试 / DLQ、broker / MySQL 恢复和重放重建。
 - muduo 构建命令兼容新版 CMake 对旧项目最低版本策略的检查。
 
 当前 CI 暂不覆盖：
 
+- 真实浏览器 UI 自动化；v2.0 使用本地实际浏览器验收记录。
 - 环境敏感的性能压测。
 - 生产告警和长期容量规划。
 
