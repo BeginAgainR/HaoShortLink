@@ -27,6 +27,8 @@ CURRENT_SERVER_LOG=""
 RUN_ID="$(date +%s)-${RANDOM}"
 ORIGINAL_URL="https://example.com/redis-diagnostic-${RUN_ID}"
 REDIRECT_CODE=""
+AUTH_SEQUENCE=0
+COOKIE_JAR="${ARTIFACT_DIR}/session.cookies"
 
 cleanup()
 {
@@ -118,7 +120,25 @@ redis.port=${REDIS_PORT}
 redis.database=0
 redis.ttl_seconds=3600
 redis.key_prefix=${REDIS_KEY_PREFIX}
+auth.registration_enabled=true
+auth.session_ttl_seconds=3600
+auth.cookie_secure=false
 EOF
+}
+
+establish_session()
+{
+    AUTH_SEQUENCE=$((AUTH_SEQUENCE + 1))
+    local username="redisdiag${RUN_ID//-/}${AUTH_SEQUENCE}"
+    local status
+    status="$(curl -sS --max-time "${CURL_MAX_TIME_SECONDS}" \
+        -o "${ARTIFACT_DIR}/auth-${AUTH_SEQUENCE}.body" \
+        -w "%{http_code}" \
+        -c "${COOKIE_JAR}" \
+        -H "Content-Type: application/json" \
+        -d "{\"username\":\"${username}\",\"password\":\"redis-diagnostic-password\"}" \
+        "${BASE_URL}/api/auth/register")"
+    expect_eq "${status}" "201" "register Redis diagnostic user"
 }
 
 wait_for_ready()
@@ -153,6 +173,7 @@ start_server()
     "${SERVER_BIN}" "${config_file}" > "${CURRENT_SERVER_LOG}" 2>&1 < /dev/null &
     SERVER_PID="$!"
     wait_for_ready
+    establish_session
 }
 
 expect_eq()
@@ -404,6 +425,7 @@ create_short_link()
 
     status="$(curl -sS --max-time "${CURL_MAX_TIME_SECONDS}" -o "${body_file}" -w "%{http_code}" \
         -X POST "${BASE_URL}/api/short-links" \
+        -b "${COOKIE_JAR}" \
         -H "Content-Type: application/json" \
         -d "{\"url\":\"${ORIGINAL_URL}\"}")"
     expect_eq "${status}" "201" "create short link status"
@@ -515,9 +537,12 @@ start_server "true" "mysql-redis"
 create_short_link
 warm_redirect_cache
 REDIS_KEY="${REDIS_KEY_PREFIX}${REDIRECT_CODE}"
+REDIS_VALUE="$(redis-cli -h "${REDIS_HOST}" -p "${REDIS_PORT}" GET "${REDIS_KEY}")"
+expect_contains "${REDIS_VALUE}" "v2|" "Redis cache value version"
+expect_contains "${REDIS_VALUE}" "|${ORIGINAL_URL}" "Redis cache value URL"
 run_redis_probe "Redis PING new connection" "ping" "" ""
-run_redis_probe "Redis GET hit new connection" "get-hit" "${REDIS_KEY}" "${ORIGINAL_URL}"
-run_redis_probe "Redis GET hit reused connection" "get-hit-reuse" "${REDIS_KEY}" "${ORIGINAL_URL}"
+run_redis_probe "Redis GET hit new connection" "get-hit" "${REDIS_KEY}" "${REDIS_VALUE}"
+run_redis_probe "Redis GET hit reused connection" "get-hit-reuse" "${REDIS_KEY}" "${REDIS_VALUE}"
 run_redis_probe "Redis GET miss new connection" "get-miss" "${REDIS_KEY_PREFIX}missing-${RUN_ID}" ""
 run_redis_probe "Redis GET miss reused connection" "get-miss-reuse" "${REDIS_KEY_PREFIX}missing-${RUN_ID}" ""
 measure_http_path "HTTP Redis hit" "/s/${REDIRECT_CODE}" "302" "http-redis-hit"

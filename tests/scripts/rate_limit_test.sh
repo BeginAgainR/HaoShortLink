@@ -20,6 +20,8 @@ TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/haohttp-rate-limit.XXXXXX")"
 CONFIG_FILE="${TMP_DIR}/server.conf"
 SERVER_LOG="${TMP_DIR}/shortlink_server.log"
 SERVER_PID=""
+COOKIE_JAR="${TMP_DIR}/cookies.txt"
+TEST_USERNAME="ratelimit_${RANDOM}"
 
 fail()
 {
@@ -68,6 +70,8 @@ cleanup()
     if command -v mysql >/dev/null 2>&1; then
         mysql_cmd -e "DELETE FROM short_links WHERE original_url LIKE 'https://example.com/rate-limit-${RUN_ID}-%'" \
             >/dev/null 2>&1 || true
+        mysql_cmd -e "DELETE FROM users WHERE username_normalized = '${TEST_USERNAME}'" \
+            >/dev/null 2>&1 || true
     fi
     rm -rf "${TMP_DIR}"
 }
@@ -91,6 +95,9 @@ server.name=HaoShortLinkRateLimitTest
 server.port=${PORT}
 server.thread_num=4
 metrics.enabled=true
+auth.registration_enabled=true
+auth.session_ttl_seconds=3600
+auth.cookie_secure=false
 storage.type=memory
 redis.enabled=false
 redis.host=${REDIS_HOST}
@@ -110,6 +117,9 @@ server.name=HaoShortLinkRateLimitMySqlTest
 server.port=${PORT}
 server.thread_num=2
 metrics.enabled=true
+auth.registration_enabled=true
+auth.session_ttl_seconds=3600
+auth.cookie_secure=false
 storage.type=mysql
 mysql.host=tcp://${MYSQL_HOST}:${MYSQL_PORT}
 mysql.user=${MYSQL_USER}
@@ -151,9 +161,20 @@ create_request()
     local suffix="$1"
     local output_file="$2"
     curl -sS -o "${output_file}" -w "%{http_code}" \
+        -b "${COOKIE_JAR}" \
         -X POST "${BASE_URL}/api/short-links" \
         -H 'Content-Type: application/json' \
         -d "{\"url\":\"https://example.com/rate-limit-${RUN_ID}-${suffix}\"}"
+}
+
+register_session()
+{
+    local status
+    status="$(curl -sS -c "${COOKIE_JAR}" -o "${TMP_DIR}/register.body" -w "%{http_code}" \
+        -X POST "${BASE_URL}/api/auth/register" \
+        -H 'Content-Type: application/json' \
+        -d "{\"username\":\"${TEST_USERNAME}\",\"password\":\"rate-limit-password\"}")"
+    expect_eq "${status}" "201" "rate limit test registration"
 }
 
 trap cleanup EXIT
@@ -172,8 +193,10 @@ header_file="${TMP_DIR}/headers.txt"
 
 write_config "${REDIS_PORT}"
 start_server
+register_session
 
 status="$(curl -sS -o "${body_file}" -w "%{http_code}" \
+    -b "${COOKIE_JAR}" \
     -X POST "${BASE_URL}/api/short-links" -d '{}')"
 expect_eq "${status}" "400" "invalid request inside allowance should keep validation response"
 
@@ -183,6 +206,7 @@ status="$(create_request two "${body_file}")"
 expect_eq "${status}" "201" "second valid request inside allowance"
 
 status="$(curl -sS -D "${header_file}" -o "${body_file}" -w "%{http_code}" \
+    -b "${COOKIE_JAR}" \
     -X POST "${BASE_URL}/api/short-links" \
     -H 'Content-Type: application/json' \
     -d "{\"url\":\"https://example.com/rate-limit-${RUN_ID}-limited\"}")"
@@ -226,6 +250,7 @@ expect_contains "${metrics_body}" 'haohttp_shortlink_rate_limit_checks_total{res
 stop_server
 write_config "1"
 start_server
+register_session
 
 status="$(create_request fail-open "${body_file}")"
 expect_eq "${status}" "201" "Redis unavailable should fail open"
@@ -240,6 +265,7 @@ redis-cli -h "${REDIS_HOST}" -p "${REDIS_PORT}" DEL "${REDIS_KEY}" >/dev/null
 mysql_cmd -e "SELECT 1" >/dev/null 2>&1 || fail "MySQL dependency should be reachable"
 write_mysql_config
 start_server
+register_session
 
 status="$(create_request mysql-cache-disabled "${body_file}")"
 expect_eq "${status}" "201" "MySQL create with query cache disabled and rate limit enabled"

@@ -12,6 +12,8 @@ CONFIG_FILE="${TMP_DIR}/server.conf"
 OVERRIDE_FILE="${TMP_DIR}/compose.override.yaml"
 BODY_FILE="${TMP_DIR}/body.txt"
 HEADER_FILE="${TMP_DIR}/headers.txt"
+COOKIE_JAR="${TMP_DIR}/cookies.txt"
+TEST_USERNAME="nginx_${RANDOM}"
 
 fail()
 {
@@ -58,6 +60,10 @@ cleanup()
         -uhao_shortlink -phao_shortlink hao_shortlink \
         -e "DELETE FROM short_links WHERE original_url LIKE 'https://example.com/nginx-rate-limit-${RUN_ID}-%'" \
         >/dev/null 2>&1 || true
+    docker compose exec -T mysql mysql \
+        -uhao_shortlink -phao_shortlink hao_shortlink \
+        -e "DELETE FROM users WHERE username_normalized = '${TEST_USERNAME}'" \
+        >/dev/null 2>&1 || true
     docker compose up -d --no-build --force-recreate shortlink_server nginx >/dev/null 2>&1 || true
     rm -rf "${TMP_DIR}"
 }
@@ -72,6 +78,9 @@ server.name=HaoShortLinkNginxRateLimitTest
 server.port=8080
 server.thread_num=4
 metrics.enabled=true
+auth.registration_enabled=true
+auth.session_ttl_seconds=3600
+auth.cookie_secure=false
 storage.type=mysql
 mysql.host=tcp://mysql:3306
 mysql.user=hao_shortlink
@@ -102,8 +111,15 @@ docker compose -f compose.yaml -f "${OVERRIDE_FILE}" up -d --no-build --force-re
     mysql redis shortlink_server nginx
 wait_for_ready
 
+register_status="$(curl -sS -c "${COOKIE_JAR}" -o "${BODY_FILE}" -w "%{http_code}" \
+    -X POST "${BASE_URL}/api/auth/register" \
+    -H 'Content-Type: application/json' \
+    -d "{\"username\":\"${TEST_USERNAME}\",\"password\":\"nginx-rate-password\"}")"
+expect_eq "${register_status}" "201" "Nginx registration"
+
 for suffix in one two; do
     status="$(curl -sS -o "${BODY_FILE}" -w "%{http_code}" \
+        -b "${COOKIE_JAR}" \
         -X POST "${BASE_URL}/api/short-links" \
         -H 'Content-Type: application/json' \
         -d "{\"url\":\"https://example.com/nginx-rate-limit-${RUN_ID}-${suffix}\"}")"
@@ -116,11 +132,16 @@ if [[ -z "${internal_code}" ]]; then
 fi
 expect_eq "$(curl -sS -o /dev/null -w "%{http_code}" "${BASE_URL}/internal/short-links/${internal_code}")" "404" \
     "Nginx should block internal lifecycle API"
-expect_eq "$(curl -sS -o /dev/null -w "%{http_code}" "${DIRECT_URL}/internal/short-links/${internal_code}")" "200" \
-    "localhost direct port should expose internal lifecycle API"
-echo "PASS: Nginx blocks internal lifecycle API while localhost direct access works"
+expect_eq "$(curl -sS -o /dev/null -w "%{http_code}" "${DIRECT_URL}/internal/short-links/${internal_code}")" "404" \
+    "application should not register legacy internal lifecycle API"
+expect_eq "$(curl -sS -b "${COOKIE_JAR}" -o /dev/null -w "%{http_code}" "${BASE_URL}/api/short-links/${internal_code}")" "200" \
+    "authenticated management API should be available through Nginx"
+expect_eq "$(curl -sS -o /dev/null -w "%{http_code}" "${DIRECT_URL}/api/short-links/${internal_code}")" "401" \
+    "direct management API should still require authentication"
+echo "PASS: legacy internal API removed and management API requires authentication"
 
 status="$(curl -sS -D "${HEADER_FILE}" -o "${BODY_FILE}" -w "%{http_code}" \
+    -b "${COOKIE_JAR}" \
     -X POST "${BASE_URL}/api/short-links" \
     -H 'Content-Type: application/json' \
     -d "{\"url\":\"https://example.com/nginx-rate-limit-${RUN_ID}-limited\"}")"

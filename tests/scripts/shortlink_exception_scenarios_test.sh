@@ -29,6 +29,8 @@ RUN_ID="$(date +%s)-${RANDOM}"
 URL_PREFIX="https://example.com/exception-${RUN_ID}"
 CREATED_ORIGINAL_URL=""
 CREATED_CODE=""
+AUTH_SEQUENCE=0
+COOKIE_JAR="${ARTIFACT_DIR}/session.cookies"
 
 cleanup()
 {
@@ -141,7 +143,25 @@ redis.port=${redis_port}
 redis.database=0
 redis.ttl_seconds=3600
 redis.key_prefix=${REDIS_KEY_PREFIX}
+auth.registration_enabled=true
+auth.session_ttl_seconds=3600
+auth.cookie_secure=false
 EOF
+}
+
+establish_session()
+{
+    AUTH_SEQUENCE=$((AUTH_SEQUENCE + 1))
+    local username="exception${RUN_ID//-/}${AUTH_SEQUENCE}"
+    local status
+    status="$(curl -sS --max-time "${CURL_MAX_TIME_SECONDS}" \
+        -o "${ARTIFACT_DIR}/auth-${AUTH_SEQUENCE}.body" \
+        -w "%{http_code}" \
+        -c "${COOKIE_JAR}" \
+        -H "Content-Type: application/json" \
+        -d "{\"username\":\"${username}\",\"password\":\"exception-test-password\"}" \
+        "${BASE_URL}/api/auth/register")"
+    expect_eq "${status}" "201" "register exception scenario user"
 }
 
 wait_for_ready()
@@ -183,6 +203,7 @@ start_server()
     "${SERVER_BIN}" "${CURRENT_CONFIG_FILE}" > "${CURRENT_SERVER_LOG}" 2>&1 < /dev/null &
     SERVER_PID="$!"
     wait_for_ready
+    establish_session
 }
 
 post_json()
@@ -192,6 +213,7 @@ post_json()
     local body_file="$3"
     curl -sS --max-time "${CURL_MAX_TIME_SECONDS}" -o "${body_file}" -w "%{http_code}" \
         -X POST "${BASE_URL}${path}" \
+        -b "${COOKIE_JAR}" \
         -H "Content-Type: application/json" \
         -d "${payload}" 2>/dev/null || printf "000"
 }
@@ -232,13 +254,15 @@ expected_body_substring="$6"
 max_time="$7"
 bodies_dir="$8"
 status_dir="$9"
-idx="${10}"
+cookie_jar="${10}"
+idx="${11}"
 body_file="${bodies_dir}/${idx}.body"
 status_file="${status_dir}/${idx}.status"
 
 if [[ "${method}" == "POST" ]]; then
     status="$(curl -sS --max-time "${max_time}" -o "${body_file}" -w "%{http_code}" \
         -X POST "${base_url}${path}" \
+        -b "${cookie_jar}" \
         -H "Content-Type: application/json" \
         -d "${payload}" 2>/dev/null || printf "000")"
 else
@@ -257,7 +281,8 @@ fi
         xargs -n 1 -P "${CONCURRENCY}" bash -c "${worker}" bash \
             "${BASE_URL}" "${method}" "${path}" "${payload}" \
             "${expected_status}" "${expected_body_substring}" \
-            "${CURL_MAX_TIME_SECONDS}" "${bodies_dir}" "${status_dir}"
+            "${CURL_MAX_TIME_SECONDS}" "${bodies_dir}" "${status_dir}" \
+            "${COOKIE_JAR}"
 
     cat "${status_dir}"/*.status | sort -n -k3 > "${status_file}"
     awk '$2 != "ok" { print $0 }' "${status_file}" > "${failures_file}"

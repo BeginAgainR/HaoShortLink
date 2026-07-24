@@ -9,11 +9,16 @@ NETWORK="${HAOHTTP_KAFKA_NETWORK:-hao-shortlink-dev_default}"
 PORT="${HAOHTTP_KAFKA_RECOVERY_PORT:-18086}"
 BASE_URL="http://127.0.0.1:${PORT}"
 SERVER_LOG=""
+RUN_ID="$(date +%s)-${RANDOM}"
+AUTH_USERNAME="kafkarecovery${RUN_ID//-/}"
+AUTH_PASSWORD="kafka-recovery-password"
+COOKIE_JAR="$(mktemp "${TMPDIR:-/tmp}/haohttp-kafka-recovery-cookie.XXXXXX")"
 
 cleanup()
 {
     docker rm -f "${SERVER_CONTAINER}" >/dev/null 2>&1 || true
     docker start "${KAFKA_CONTAINER}" >/dev/null 2>&1 || true
+    rm -f "${COOKIE_JAR}"
 }
 
 fail()
@@ -77,7 +82,15 @@ for _ in {1..80}; do
 done
 curl -fsS "${BASE_URL}/api/health" >/dev/null 2>&1 || fail "recovery test server did not become healthy"
 
+register_status="$(curl -sS -o /dev/null -w '%{http_code}' \
+    -c "${COOKIE_JAR}" \
+    -H 'Content-Type: application/json' \
+    -d "{\"username\":\"${AUTH_USERNAME}\",\"password\":\"${AUTH_PASSWORD}\"}" \
+    "${BASE_URL}/api/auth/register")"
+expect_eq "${register_status}" "201" "register recovery test user"
+
 body="$(curl -fsS -H 'Content-Type: application/json' \
+    -b "${COOKIE_JAR}" \
     -d '{"url":"https://example.com/kafka-recovery"}' \
     "${BASE_URL}/api/short-links")"
 code="$(printf '%s' "${body}" | sed -n 's/.*"code":"\([^"]*\)".*/\1/p')"

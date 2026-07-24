@@ -29,6 +29,10 @@ SERVER_PID=""
 CONSUMER_PID=""
 RUN_ID="$(date +%s)-${RANDOM}"
 GROUP_ID="hao-shortlink-access-event-integration-${RUN_ID}"
+AUTH_USERNAME="kafka_${RANDOM}"
+OTHER_AUTH_USERNAME="kafka_other_${RANDOM}"
+COOKIE_JAR="${TMP_DIR}/cookies.txt"
+OTHER_COOKIE_JAR="${TMP_DIR}/other-cookies.txt"
 
 cleanup()
 {
@@ -122,6 +126,25 @@ start_server()
     stdbuf -oL -eL "${SERVER_BIN}" "${SERVER_CONFIG}" > "${SERVER_LOG}" 2>&1 &
     SERVER_PID="$!"
     wait_for_server
+    establish_session
+}
+
+establish_session()
+{
+    local status
+    status="$(curl -sS -c "${COOKIE_JAR}" -o "${TMP_DIR}/auth.body" -w '%{http_code}' \
+        -H 'Content-Type: application/json' \
+        -d "{\"username\":\"${AUTH_USERNAME}\",\"password\":\"kafka-test-password\"}" \
+        "${BASE_URL}/api/auth/login")"
+    if [[ "${status}" == "401" ]]; then
+        status="$(curl -sS -c "${COOKIE_JAR}" -o "${TMP_DIR}/auth.body" -w '%{http_code}' \
+            -H 'Content-Type: application/json' \
+            -d "{\"username\":\"${AUTH_USERNAME}\",\"password\":\"kafka-test-password\"}" \
+            "${BASE_URL}/api/auth/register")"
+        expect_eq "${status}" "201" "register Kafka test user"
+    else
+        expect_eq "${status}" "200" "login Kafka test user"
+    fi
 }
 
 metric_value()
@@ -159,6 +182,7 @@ command -v stdbuf >/dev/null 2>&1 || fail "stdbuf is required"
 command -v timeout >/dev/null 2>&1 || fail "timeout is required"
 command -v "${KCAT_BIN}" >/dev/null 2>&1 || fail "${KCAT_BIN} is required"
 command -v mysql >/dev/null 2>&1 || fail "mysql client is required"
+command -v python3 >/dev/null 2>&1 || fail "python3 is required"
 
 "${KCAT_BIN}" -L -b "${KAFKA_BOOTSTRAP_SERVERS}" -t "${TOPIC}" >/dev/null 2>&1 ||
     fail "Kafka topic ${TOPIC} is not reachable at ${KAFKA_BOOTSTRAP_SERVERS}"
@@ -169,6 +193,9 @@ server.name=HaoShortLinkKafkaIntegration
 server.port=${PORT}
 server.thread_num=2
 metrics.enabled=true
+auth.registration_enabled=true
+auth.session_ttl_seconds=3600
+auth.cookie_secure=false
 storage.type=mysql
 statistics.enabled=true
 mysql.host=tcp://${MYSQL_HOST}:${MYSQL_PORT}
@@ -192,6 +219,7 @@ start_server
 
 body_file="${TMP_DIR}/body.txt"
 status="$(curl -sS -o "${body_file}" -w '%{http_code}' \
+    -b "${COOKIE_JAR}" \
     -H 'Content-Type: application/json' \
     -d "{\"url\":\"https://example.com/kafka-${RUN_ID}\"}" \
     "${BASE_URL}/api/short-links")"
@@ -207,14 +235,16 @@ missing_request="v18-${RUN_ID}-missing"
 expect_eq "$(curl -sS -o /dev/null -w '%{http_code}' -H "X-Request-ID: ${success_request}" "${BASE_URL}/s/${code}")" \
     "302" "success redirect while Kafka is healthy"
 expect_eq "$(curl -sS -o /dev/null -w '%{http_code}' -X PUT \
+    -b "${COOKIE_JAR}" \
     -H 'Content-Type: application/json' -d '{"status":"disabled"}' \
-    "${BASE_URL}/internal/short-links/${code}")" "200" "disable short link"
+    "${BASE_URL}/api/short-links/${code}")" "200" "disable short link"
 expect_eq "$(curl -sS -o /dev/null -w '%{http_code}' -H "X-Request-ID: ${disabled_request}" "${BASE_URL}/s/${code}")" \
     "404" "disabled redirect while Kafka is healthy"
 expect_eq "$(curl -sS -o /dev/null -w '%{http_code}' -X PUT \
+    -b "${COOKIE_JAR}" \
     -H 'Content-Type: application/json' \
     -d '{"status":"active","expires_at":"2000-01-01T00:00:00Z"}' \
-    "${BASE_URL}/internal/short-links/${code}")" "200" "expire short link"
+    "${BASE_URL}/api/short-links/${code}")" "200" "expire short link"
 expect_eq "$(curl -sS -o /dev/null -w '%{http_code}' -H "X-Request-ID: ${expired_request}" "${BASE_URL}/s/${code}")" \
     "404" "expired redirect while Kafka is healthy"
 expect_eq "$(curl -sS -o /dev/null -w '%{http_code}' -H "X-Request-ID: ${missing_request}" "${BASE_URL}/s/missing-${RUN_ID}")" \
@@ -339,46 +369,78 @@ expect_eq "${missing_disposition}" \
     "not_found_ignored" "not-found event should keep only an ignored receipt"
 echo "PASS: MySQL transaction, aggregate, duplicate and not-found semantics"
 
-statistics_body="$(curl -fsS \
-    "${BASE_URL}/internal/short-links/${code}/statistics?interval=hour&from=2026-07-17T16:00:00Z&to=2026-07-17T17:00:00Z")"
-expect_contains "${statistics_body}" '"consistency":"eventual"' \
-    "statistics consistency contract"
-expect_contains "${statistics_body}" '"access_count":2,"attempt_count":4' \
-    "statistics summary counts"
-expect_contains "${statistics_body}" \
-    '"result_counts":{"success":2,"disabled":1,"expired":1,"error":0}' \
-    "statistics result breakdown"
-expect_contains "${statistics_body}" \
-    '"bucket_start":"2026-07-17T16:00:00Z","access_count":1,"attempt_count":1' \
-    "hourly statistics trend"
-day_statistics_body="$(curl -fsS \
-    "${BASE_URL}/internal/short-links/${code}/statistics?interval=day&from=2026-07-17T00:00:00Z&to=2026-07-18T00:00:00Z")"
-expect_contains "${day_statistics_body}" \
-    '"bucket_start":"2026-07-17T00:00:00Z","access_count":1,"attempt_count":1' \
-    "daily statistics trend"
+statistics_body="$(curl -fsS -b "${COOKIE_JAR}" \
+    "${BASE_URL}/api/short-links/${code}/statistics?interval=hour&from=2026-07-17T16:00:00Z&to=2026-07-17T17:00:00Z")"
+python3 -c '
+import json
+import sys
+
+body = json.load(sys.stdin)
+expected = {"success": 2, "disabled": 1, "expired": 1, "error": 0}
+summary = body.get("summary", {})
+points = body.get("trend", {}).get("points", [])
+if body.get("consistency") != "eventual":
+    raise SystemExit(1)
+if summary.get("access_count") != 2 or summary.get("attempt_count") != 4:
+    raise SystemExit(1)
+if summary.get("result_counts") != expected:
+    raise SystemExit(1)
+if len(points) != 1:
+    raise SystemExit(1)
+point = points[0]
+if (point.get("bucket_start") != "2026-07-17T16:00:00Z"
+        or point.get("access_count") != 1
+        or point.get("attempt_count") != 1):
+    raise SystemExit(1)
+' <<< "${statistics_body}" || fail "hourly statistics response contract: got ${statistics_body}"
+day_statistics_body="$(curl -fsS -b "${COOKIE_JAR}" \
+    "${BASE_URL}/api/short-links/${code}/statistics?interval=day&from=2026-07-17T00:00:00Z&to=2026-07-18T00:00:00Z")"
+python3 -c '
+import json
+import sys
+
+points = json.load(sys.stdin).get("trend", {}).get("points", [])
+if len(points) != 1:
+    raise SystemExit(1)
+point = points[0]
+if (point.get("bucket_start") != "2026-07-17T00:00:00Z"
+        or point.get("access_count") != 1
+        or point.get("attempt_count") != 1):
+    raise SystemExit(1)
+' <<< "${day_statistics_body}" || fail "daily statistics response contract: got ${day_statistics_body}"
+other_register_status="$(curl -sS -c "${OTHER_COOKIE_JAR}" -o "${body_file}" -w '%{http_code}' \
+    -H 'Content-Type: application/json' \
+    -d "{\"username\":\"${OTHER_AUTH_USERNAME}\",\"password\":\"kafka-test-password\"}" \
+    "${BASE_URL}/api/auth/register")"
+expect_eq "${other_register_status}" "201" "register second Kafka test user"
+expect_eq "$(curl -sS -b "${OTHER_COOKIE_JAR}" -o "${body_file}" -w '%{http_code}' \
+    "${BASE_URL}/api/short-links/${code}/statistics")" \
+    "404" "cross-owner statistics must not disclose the link"
+echo "PASS: statistics query enforces object-level owner authorization"
 expect_eq "$(curl -sS -o /dev/null -w '%{http_code}' \
-    "${BASE_URL}/internal/short-links/${code}/statistics?interval=week")" \
+    -b "${COOKIE_JAR}" "${BASE_URL}/api/short-links/${code}/statistics?interval=week")" \
     "400" "statistics interval validation"
 expect_eq "$(curl -sS -o /dev/null -w '%{http_code}' \
-    "${BASE_URL}/internal/short-links/${code}/statistics?interval=hour&from=2026-07-17T16:00:01Z&to=2026-07-17T17:00:00Z")" \
+    -b "${COOKIE_JAR}" "${BASE_URL}/api/short-links/${code}/statistics?interval=hour&from=2026-07-17T16:00:01Z&to=2026-07-17T17:00:00Z")" \
     "400" "statistics bucket alignment validation"
 expect_eq "$(curl -sS -o /dev/null -w '%{http_code}' \
-    "${BASE_URL}/internal/short-links/${code}/statistics?interval=hour&from=2026-01-01T00:00:00Z&to=2026-02-02T00:00:00Z")" \
+    -b "${COOKIE_JAR}" "${BASE_URL}/api/short-links/${code}/statistics?interval=hour&from=2026-01-01T00:00:00Z&to=2026-02-02T00:00:00Z")" \
     "400" "statistics maximum range validation"
 expect_eq "$(curl -sS -o /dev/null -w '%{http_code}' \
-    "${BASE_URL}/internal/short-links/missing-${RUN_ID}/statistics")" \
+    -b "${COOKIE_JAR}" "${BASE_URL}/api/short-links/missing-${RUN_ID}/statistics")" \
     "404" "missing short-link statistics"
 expect_contains "$(curl -fsS "${BASE_URL}/metrics")" \
     'haohttp_shortlink_backend_errors_total{backend="mysql",operation="statistics"} 0' \
     "statistics backend metric"
 expect_eq "$(curl -sS -o "${body_file}" -w '%{http_code}' \
+    -b "${COOKIE_JAR}" \
     -H 'Content-Type: application/json' \
     -d "{\"url\":\"https://example.com/no-statistics-${RUN_ID}\"}" \
     "${BASE_URL}/api/short-links")" "201" "create short link without access events"
 empty_statistics_code="$(sed -n 's/.*"code":"\([^"]*\)".*/\1/p' "${body_file}")"
 [[ -n "${empty_statistics_code}" ]] || fail "empty-statistics fixture did not contain a code"
-empty_statistics_body="$(curl -fsS \
-    "${BASE_URL}/internal/short-links/${empty_statistics_code}/statistics")"
+empty_statistics_body="$(curl -fsS -b "${COOKIE_JAR}" \
+    "${BASE_URL}/api/short-links/${empty_statistics_code}/statistics")"
 expect_contains "${empty_statistics_body}" '"access_count":0,"attempt_count":0' \
     "existing short link with no statistics"
 expect_contains "${empty_statistics_body}" '"points":[]' \
@@ -433,6 +495,9 @@ server.name=HaoShortLinkKafkaInvalidConfig
 server.port=${PORT}
 server.thread_num=2
 metrics.enabled=true
+auth.registration_enabled=true
+auth.session_ttl_seconds=3600
+auth.cookie_secure=false
 storage.type=memory
 redis.enabled=false
 rate_limit.enabled=false
@@ -448,6 +513,7 @@ EOF
 start_server
 
 expect_eq "$(curl -sS -o "${body_file}" -w '%{http_code}' \
+    -b "${COOKIE_JAR}" \
     -H 'Content-Type: application/json' \
     -d "{\"url\":\"https://example.com/invalid-kafka-config-${RUN_ID}\"}" \
     "${BASE_URL}/api/short-links")" "201" "create fixture after Kafka initialization failure"
@@ -465,6 +531,9 @@ server.name=HaoShortLinkKafkaFailOpen
 server.port=${PORT}
 server.thread_num=2
 metrics.enabled=true
+auth.registration_enabled=true
+auth.session_ttl_seconds=3600
+auth.cookie_secure=false
 storage.type=memory
 redis.enabled=false
 rate_limit.enabled=false
@@ -480,6 +549,7 @@ EOF
 start_server
 
 expect_eq "$(curl -sS -o "${body_file}" -w '%{http_code}' \
+    -b "${COOKIE_JAR}" \
     -H 'Content-Type: application/json' \
     -d "{\"url\":\"https://example.com/fail-open-${RUN_ID}\"}" \
     "${BASE_URL}/api/short-links")" "201" "create fail-open fixture"

@@ -19,6 +19,8 @@ CONFIG_FILE="${TMP_DIR}/server.conf"
 SERVER_LOG="${TMP_DIR}/shortlink_server.log"
 SERVER_PID=""
 TEST_ORIGINAL_URL="https://example.com/redis-fallback-$(date +%s)-${RANDOM}"
+TEST_USERNAME="fallback_${RANDOM}"
+COOKIE_JAR="${TMP_DIR}/cookies.txt"
 
 cleanup()
 {
@@ -29,6 +31,7 @@ cleanup()
 
     if command -v mysql >/dev/null 2>&1; then
         mysql_cmd -e "DELETE FROM short_links WHERE original_url = '${TEST_ORIGINAL_URL}'" >/dev/null 2>&1 || true
+        mysql_cmd -e "DELETE FROM users WHERE username_normalized = '${TEST_USERNAME}'" >/dev/null 2>&1 || true
     fi
 
     rm -rf "${TMP_DIR}"
@@ -101,6 +104,9 @@ server.name=HaoShortLinkRedisFallback
 server.port=${PORT}
 server.thread_num=1
 metrics.enabled=true
+auth.registration_enabled=true
+auth.session_ttl_seconds=3600
+auth.cookie_secure=false
 storage.type=mysql
 mysql.host=tcp://${MYSQL_HOST}:${MYSQL_PORT}
 mysql.user=${MYSQL_USER}
@@ -137,7 +143,13 @@ fi
 body_file="${TMP_DIR}/body.txt"
 header_file="${TMP_DIR}/headers.txt"
 
+status="$(curl -sS -c "${COOKIE_JAR}" -o "${body_file}" -w "%{http_code}" \
+    -X POST "${BASE_URL}/api/auth/register" -H 'Content-Type: application/json' \
+    -d "{\"username\":\"${TEST_USERNAME}\",\"password\":\"fallback-password\"}")"
+expect_eq "${status}" "201" "register Redis fallback user status"
+
 status="$(curl -sS -o "${body_file}" -w "%{http_code}" \
+    -b "${COOKIE_JAR}" \
     -X POST "${BASE_URL}/api/short-links" \
     -H 'Content-Type: application/json' \
     -d "{\"url\":\"${TEST_ORIGINAL_URL}\"}")"

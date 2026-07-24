@@ -24,6 +24,7 @@ SUMMARY_FILE="${ARTIFACT_DIR}/summary.md"
 SERVER_PID=""
 RUN_ID="$(date +%s)-${RANDOM}"
 URL_PREFIX="https://example.com/mysql-create-diagnostic-${RUN_ID}"
+COOKIE_JAR="${ARTIFACT_DIR}/session.cookies"
 
 cleanup()
 {
@@ -102,7 +103,26 @@ mysql.password=${MYSQL_PASSWORD}
 mysql.database=${MYSQL_DATABASE}
 mysql.pool_size=${MYSQL_POOL_SIZE}
 redis.enabled=false
+auth.registration_enabled=true
+auth.session_ttl_seconds=3600
+auth.cookie_secure=false
 EOF
+}
+
+establish_session()
+{
+    local username="creatediag${RUN_ID//-/}"
+    local status
+    status="$(curl -sS --max-time "${CURL_MAX_TIME_SECONDS}" \
+        -o "${ARTIFACT_DIR}/auth.body" \
+        -w "%{http_code}" \
+        -c "${COOKIE_JAR}" \
+        -H "Content-Type: application/json" \
+        -d "{\"username\":\"${username}\",\"password\":\"create-diagnostic-password\"}" \
+        "${BASE_URL}/api/auth/register")"
+    if [[ "${status}" != "201" ]]; then
+        fail "register create diagnostic user: expected 201, got ${status}"
+    fi
 }
 
 ensure_port_unused()
@@ -148,7 +168,8 @@ status_dir="$3"
 url_prefix="$4"
 max_time="$5"
 concurrency="$6"
-idx="$7"
+cookie_jar="$7"
+idx="$8"
 body_file="${bodies_dir}/${idx}.body"
 status_file="${status_dir}/${idx}.status"
 original_url="${url_prefix}-c${concurrency}-r${idx}"
@@ -156,6 +177,7 @@ payload="{\"url\":\"${original_url}\"}"
 
 line="$(curl -sS --max-time "${max_time}" -o "${body_file}" -w "%{http_code} %{time_total}" \
     -X POST "${base_url}/api/short-links" \
+    -b "${cookie_jar}" \
     -H "Content-Type: application/json" \
     -d "${payload}" 2>/dev/null || printf "000 0")"
 printf "%s %s %s\n" "${line}" "${idx}" "${body_file}" > "${status_file}"
@@ -164,7 +186,7 @@ printf "%s %s %s\n" "${line}" "${idx}" "${body_file}" > "${status_file}"
     seq 1 "${REQUESTS}" |
         xargs -n 1 -P "${concurrency}" sh -c "${worker}" sh \
             "${BASE_URL}" "${bodies_dir}" "${status_dir}" "${URL_PREFIX}" \
-            "${CURL_MAX_TIME_SECONDS}" "${concurrency}"
+            "${CURL_MAX_TIME_SECONDS}" "${concurrency}" "${COOKIE_JAR}"
 
     cat "${status_dir}"/*.status | sort -n -k3 > "${status_file}"
 
@@ -230,6 +252,7 @@ EOF
 "${SERVER_BIN}" "${CONFIG_FILE}" > "${SERVER_LOG}" 2>&1 < /dev/null &
 SERVER_PID="$!"
 wait_for_ready
+establish_session
 
 echo "Artifacts: ${ARTIFACT_DIR}"
 echo "Summary: ${SUMMARY_FILE}"

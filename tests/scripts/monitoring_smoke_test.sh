@@ -8,6 +8,26 @@ PROMETHEUS_URL="${HAOHTTP_PROMETHEUS_URL:-http://127.0.0.1:9090}"
 GRAFANA_URL="${HAOHTTP_GRAFANA_URL:-http://127.0.0.1:3000}"
 GRAFANA_ADMIN_USER="${GRAFANA_ADMIN_USER:-admin}"
 GRAFANA_ADMIN_PASSWORD="${GRAFANA_ADMIN_PASSWORD:-admin}"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/haohttp-monitoring.XXXXXX")"
+COOKIE_JAR="${TMP_DIR}/cookies.txt"
+RUN_ID="$(date +%s)-${RANDOM}"
+TEST_USERNAME="monitor_${RANDOM}"
+TEST_ORIGINAL_URL="https://example.com/monitoring-${RUN_ID}"
+
+cleanup()
+{
+    docker compose exec -T mysql mysql \
+        -uhao_shortlink -phao_shortlink hao_shortlink \
+        -e "DELETE FROM short_links WHERE original_url = '${TEST_ORIGINAL_URL}'" \
+        >/dev/null 2>&1 || true
+    docker compose exec -T mysql mysql \
+        -uhao_shortlink -phao_shortlink hao_shortlink \
+        -e "DELETE FROM users WHERE username_normalized = '${TEST_USERNAME}'" \
+        >/dev/null 2>&1 || true
+    rm -rf "${TMP_DIR}"
+}
+
+trap cleanup EXIT
 
 fail()
 {
@@ -90,10 +110,26 @@ docker compose up -d --build
 wait_for_http "${NGINX_URL}/api/health" "Nginx and shortlink_server"
 wait_for_http "${PROMETHEUS_URL}/-/ready" "Prometheus"
 wait_for_http "${GRAFANA_URL}/api/health" "Grafana"
+wait_for_http "${NGINX_URL}/app/" "management page"
+wait_for_http "${NGINX_URL}/openapi.yaml" "OpenAPI document"
+management_page="$(curl -fsS "${NGINX_URL}/app/")"
+expect_contains "${management_page}" '短链接工作台' "management page content"
+expect_contains "${management_page}" 'id="expiry-form"' "management page lifecycle form"
+openapi_document="$(curl -fsS "${NGINX_URL}/openapi.yaml")"
+expect_contains "${openapi_document}" 'openapi: 3.1.0' "OpenAPI version"
+expect_contains "${openapi_document}" '/api/auth/session:' "OpenAPI authentication routes"
+echo "PASS: management page and OpenAPI assets are current"
+
+register_status="$(curl -sS -c "${COOKIE_JAR}" -o "${TMP_DIR}/register.body" -w '%{http_code}' \
+    -X POST "${NGINX_URL}/api/auth/register" \
+    -H 'Content-Type: application/json' \
+    -d "{\"username\":\"${TEST_USERNAME}\",\"password\":\"monitoring-password\"}")"
+[[ "${register_status}" == "201" ]] || fail "registration status: expected 201, got ${register_status}"
 
 create_body="$(curl -fsS -X POST "${NGINX_URL}/api/short-links" \
+    -b "${COOKIE_JAR}" \
     -H 'Content-Type: application/json' \
-    -d "{\"url\":\"https://example.com/monitoring-$(date +%s)\"}")"
+    -d "{\"url\":\"${TEST_ORIGINAL_URL}\"}")"
 code="$(printf '%s' "${create_body}" | sed -n 's/.*"code":"\([^"]*\)".*/\1/p')"
 [[ -n "${code}" ]] || fail "create response did not contain a short code: ${create_body}"
 

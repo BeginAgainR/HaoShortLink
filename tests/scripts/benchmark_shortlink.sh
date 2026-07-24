@@ -42,6 +42,10 @@ BENCH_CREATE_URL="https://example.com/benchmark-create-${BENCH_ID}"
 BENCH_REDIRECT_URL="${BASE_URL}/api/health"
 REDIRECT_CODE=""
 RESOLVED_BENCH_TOOL=""
+AUTH_USERNAME="${HAOHTTP_BENCH_USERNAME:-benchmark${BENCH_ID//-/}}"
+AUTH_PASSWORD="${HAOHTTP_BENCH_PASSWORD:-benchmark-password-${BENCH_ID}}"
+COOKIE_JAR="${TMP_DIR}/session.cookies"
+COOKIE_HEADER=""
 
 cleanup()
 {
@@ -138,6 +142,9 @@ server.port=${PORT}
 server.thread_num=${THREAD_NUM}
 storage.type=memory
 redis.enabled=false
+auth.registration_enabled=true
+auth.session_ttl_seconds=3600
+auth.cookie_secure=false
 EOF
 
     case "${MODE}" in
@@ -155,6 +162,9 @@ mysql.password=${MYSQL_PASSWORD}
 mysql.database=${MYSQL_DATABASE}
 mysql.pool_size=${MYSQL_POOL_SIZE}
 redis.enabled=false
+auth.registration_enabled=true
+auth.session_ttl_seconds=3600
+auth.cookie_secure=false
 EOF
             if [[ "${MODE}" == "mysql-redis" ]]; then
                 cat >> "${CONFIG_FILE}" <<EOF
@@ -198,6 +208,31 @@ EOF
             fail "unsupported HAOHTTP_BENCH_KAFKA_MODE=${KAFKA_MODE}; use disabled, normal, or failure"
             ;;
     esac
+}
+
+establish_session()
+{
+    local login_body="${TMP_DIR}/login-body.txt"
+    local status
+    status="$(curl -sS -o "${login_body}" -w "%{http_code}" \
+        -c "${COOKIE_JAR}" \
+        -H 'Content-Type: application/json' \
+        -d "{\"username\":\"${AUTH_USERNAME}\",\"password\":\"${AUTH_PASSWORD}\"}" \
+        "${BASE_URL}/api/auth/login")"
+
+    if [[ "${status}" != "200" ]]; then
+        status="$(curl -sS -o "${login_body}" -w "%{http_code}" \
+            -c "${COOKIE_JAR}" \
+            -H 'Content-Type: application/json' \
+            -d "{\"username\":\"${AUTH_USERNAME}\",\"password\":\"${AUTH_PASSWORD}\"}" \
+            "${BASE_URL}/api/auth/register")"
+    fi
+    if [[ "${status}" != "200" && "${status}" != "201" ]]; then
+        fail "failed to establish benchmark session: HTTP ${status}; set HAOHTTP_BENCH_USERNAME and HAOHTTP_BENCH_PASSWORD for targets with registration disabled"
+    fi
+
+    COOKIE_HEADER="$(awk '$6 == "hao_session" { value=$6 "=" $7 } END { print value }' "${COOKIE_JAR}")"
+    [[ -n "${COOKIE_HEADER}" ]] || fail "authentication response did not set hao_session cookie"
 }
 
 wait_for_ready()
@@ -245,6 +280,7 @@ create_short_link()
 
     status="$(curl -sS -o "${body_file}" -w "%{http_code}" \
         -X POST "${BASE_URL}/api/short-links" \
+        -b "${COOKIE_JAR}" \
         -H 'Content-Type: application/json' \
         -d "{\"url\":\"${original_url}\"}")"
 
@@ -332,6 +368,8 @@ run_hey()
     local output_file="${TMP_DIR}/${safe_label}.hey.csv"
     local url="${BASE_URL}${path}"
     local -a cmd=("${HEY_BIN}" -n "${REQUESTS}" -c "${CONCURRENCY}" -o csv -m "${method}")
+
+    cmd+=(-H "Cookie: ${COOKIE_HEADER}")
 
     if [[ "${method}" == "POST" ]]; then
         cmd+=(-H "Content-Type: application/json" -d "${body}")
@@ -433,16 +471,18 @@ url="$2"
 body="$3"
 output_dir="$4"
 max_time="$5"
-idx="$6"
+cookie_header="$6"
+idx="$7"
 output_file="${output_dir}/${idx}.txt"
 
 if [ "${method}" = "POST" ]; then
     curl -sS --max-time "${max_time}" -o /dev/null -w "%{http_code} %{time_total}\n" \
-        -X "${method}" -H "Content-Type: application/json" -d "${body}" "${url}" \
+        -X "${method}" -H "Cookie: ${cookie_header}" \
+        -H "Content-Type: application/json" -d "${body}" "${url}" \
         > "${output_file}" 2>/dev/null || echo "000 0" > "${output_file}"
 else
     curl -sS --max-time "${max_time}" -o /dev/null -w "%{http_code} %{time_total}\n" \
-        -X "${method}" "${url}" \
+        -X "${method}" -H "Cookie: ${cookie_header}" "${url}" \
         > "${output_file}" 2>/dev/null || echo "000 0" > "${output_file}"
 fi
 '
@@ -450,7 +490,8 @@ fi
     start_ms="$(now_ms)"
     seq 1 "${REQUESTS}" |
         xargs -n 1 -P "${CONCURRENCY}" sh -c "${curl_worker}" sh \
-            "${method}" "${url}" "${body}" "${output_dir}" "${CURL_MAX_TIME_SECONDS}"
+            "${method}" "${url}" "${body}" "${output_dir}" \
+            "${CURL_MAX_TIME_SECONDS}" "${COOKIE_HEADER}"
     end_ms="$(now_ms)"
     elapsed_ms=$((end_ms - start_ms))
 
@@ -605,6 +646,8 @@ else
     wait_for_ready
     CONFIG_DESCRIPTION="${CONFIG_FILE}"
 fi
+
+establish_session
 
 cat <<EOF
 Benchmark configuration:

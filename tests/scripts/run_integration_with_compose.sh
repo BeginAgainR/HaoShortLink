@@ -59,6 +59,8 @@ docker compose up -d mysql redis
 
 wait_for_healthy "hao-shortlink-mysql" "MySQL"
 wait_for_healthy "hao-shortlink-redis" "Redis"
+SHORTLINK_MYSQL_IMAGE="${MYSQL_IMAGE}" docker compose run --rm schema_migrate
+echo "PASS: schema migration completed before integration tests"
 
 run_test_script "tests/scripts/mysql_redis_integration_test.sh"
 run_test_script "tests/scripts/redis_unavailable_fallback_test.sh"

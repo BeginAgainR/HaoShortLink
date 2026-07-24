@@ -86,7 +86,7 @@ wait_for_mysql
 
 docker exec "${MYSQL_CONTAINER}" mysql \
     -uhao_shortlink -phao_shortlink hao_shortlink \
-    -e "INSERT INTO short_links (code, original_url, status) VALUES ('${CODE}', 'https://example.com/mysql-recovery', 'active')" \
+    -e "INSERT INTO short_links (owner_id, code, original_url, status) SELECT id, '${CODE}', 'https://example.com/mysql-recovery', 'active' FROM users WHERE username_normalized = 'legacy-system'" \
     >/dev/null 2>&1
 
 cat > "${CONSUMER_CONFIG}" <<EOF
