@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>HaoShortLink</title>
+  <link rel="stylesheet" href="/app/app.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="masthead">
+      <div>
+        <p class="eyebrow">HaoShortLink · v2.0</p>
+        <h1>短链接工作台</h1>
+        <p class="lede">创建、管理并观察属于你的短链接。</p>
+      </div>
+      <div id="user-panel" class="user-panel hidden">
+        <span id="current-user"></span>
+        <button id="logout-button" class="button ghost" type="button">退出</button>
+      </div>
+    </header>
+
+    <section id="notice" class="notice hidden" role="status" aria-live="polite"></section>
+
+    <section id="auth-view" class="auth-grid">
+      <form id="login-form" class="panel">
+        <p class="section-label">已有账号</p>
+        <h2>登录</h2>
+        <label>用户名<input name="username" autocomplete="username" required minlength="3" maxlength="32"></label>
+        <label>密码<input name="password" type="password" autocomplete="current-password" required minlength="10" maxlength="128"></label>
+        <button class="button primary" type="submit">进入工作台</button>
+      </form>
+
+      <form id="register-form" class="panel muted-panel">
+        <p class="section-label">第一次使用</p>
+        <h2>注册</h2>
+        <label>用户名<input name="username" autocomplete="username" required minlength="3" maxlength="32" pattern="[A-Za-z][A-Za-z0-9_-]{2,31}"></label>
+        <label>密码<input name="password" type="password" autocomplete="new-password" required minlength="10" maxlength="128"></label>
+        <button class="button" type="submit">创建账号</button>
+      </form>
+    </section>
+
+    <section id="workspace" class="hidden">
+      <form id="create-form" class="panel create-panel">
+        <div>
+          <p class="section-label">新建链接</p>
+          <h2>把长地址变短</h2>
+        </div>
+        <label class="wide">原始 URL<input name="url" type="url" placeholder="https://example.com/long/path" required></label>
+        <label>自定义短码（可选）<input name="custom_code" placeholder="launch_2026" minlength="4" maxlength="32" pattern="[A-Za-z0-9_-]{4,32}"></label>
+        <label>过期时间（可选）<input name="expires_at" type="datetime-local"></label>
+        <button class="button primary" type="submit">创建短链接</button>
+      </form>
+
+      <section class="links-section">
+        <div class="section-heading">
+          <div>
+            <p class="section-label">我的链接</p>
+            <h2>最近创建</h2>
+          </div>
+          <div class="filters">
+            <select id="status-filter" aria-label="状态筛选">
+              <option value="">全部状态</option>
+              <option value="active">启用</option>
+              <option value="disabled">禁用</option>
+            </select>
+            <button id="refresh-button" class="button ghost" type="button">刷新</button>
+          </div>
+        </div>
+        <div id="empty-state" class="empty hidden">还没有短链接，先创建第一条吧。</div>
+        <div id="links-list" class="link-list"></div>
+        <button id="load-more-button" class="button ghost hidden" type="button">加载更多</button>
+      </section>
+
+      <aside id="statistics-panel" class="panel statistics-panel hidden" aria-live="polite">
+        <div class="section-heading">
+          <div>
+            <p class="section-label">异步统计</p>
+            <h2 id="statistics-title">访问概览</h2>
+          </div>
+          <button id="close-statistics" class="button ghost" type="button">关闭</button>
+        </div>
+        <div id="statistics-content"></div>
+      </aside>
+
+      <aside id="expiry-panel" class="panel expiry-panel hidden" aria-live="polite">
+        <div class="section-heading">
+          <div>
+            <p class="section-label">生命周期</p>
+            <h2 id="expiry-title">设置过期时间</h2>
+          </div>
+        </div>
+        <form id="expiry-form">
+          <label>UTC 过期时间
+            <input name="expires_at" placeholder="2026-12-31T00:00:00Z">
+          </label>
+          <p class="link-meta">使用 UTC 时间；留空并保存表示永不过期。</p>
+          <div class="form-actions">
+            <button class="button primary" type="submit">保存过期时间</button>
+            <button id="cancel-expiry" class="button ghost" type="button">取消</button>
+          </div>
+        </form>
+      </aside>
+    </section>
+  </main>
+  <script src="/app/app.js" defer></script>
+</body>
+</html>

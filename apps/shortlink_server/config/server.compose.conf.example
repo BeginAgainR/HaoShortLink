@@ -7,6 +7,10 @@ server.thread_num=4
 log.level=INFO
 metrics.enabled=true
 
+auth.registration_enabled=true
+auth.session_ttl_seconds=604800
+auth.cookie_secure=false
+
 # This file is intended for shortlink_server running in the haoHTTP
 # OrbStack Linux machine while MySQL and Redis run in OrbStack Docker.
 storage.type=mysql

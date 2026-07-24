@@ -23,25 +23,50 @@ constexpr std::size_t kMinCodeLength = 6;
 
 std::optional<ShortLinkRepository::ShortLinkRecord>
 MySqlShortLinkRepository::create(const std::string& originalUrl,
-                                 std::optional<std::int64_t> expiresAt)
+                                 std::optional<std::int64_t> expiresAt,
+                                 std::uint64_t ownerId,
+                                 std::optional<std::string> customCode)
 {
     std::shared_ptr<http::db::DbConnection> conn;
+    const std::string requestedCode = customCode.value_or("");
 
     try
     {
         conn = http::db::DbConnectionPool::getInstance().getConnection();
         conn->executeRawUpdate("START TRANSACTION");
-        if (expiresAt)
+        if (customCode && expiresAt)
         {
             conn->executeUpdate(
-                "INSERT INTO short_links (original_url, expires_at) "
-                "VALUES (?, DATE_ADD('1970-01-01 00:00:00', INTERVAL ? SECOND))",
+                "INSERT INTO short_links (owner_id, code, original_url, expires_at) "
+                "VALUES (?, ?, ?, DATE_ADD('1970-01-01 00:00:00', INTERVAL ? SECOND))",
+                ownerId,
+                requestedCode,
+                originalUrl,
+                *expiresAt);
+        }
+        else if (customCode)
+        {
+            conn->executeUpdate(
+                "INSERT INTO short_links (owner_id, code, original_url) VALUES (?, ?, ?)",
+                ownerId,
+                requestedCode,
+                originalUrl);
+        }
+        else if (expiresAt)
+        {
+            conn->executeUpdate(
+                "INSERT INTO short_links (owner_id, original_url, expires_at) "
+                "VALUES (?, ?, DATE_ADD('1970-01-01 00:00:00', INTERVAL ? SECOND))",
+                ownerId,
                 originalUrl,
                 *expiresAt);
         }
         else
         {
-            conn->executeUpdate("INSERT INTO short_links (original_url) VALUES (?)", originalUrl);
+            conn->executeUpdate(
+                "INSERT INTO short_links (owner_id, original_url) VALUES (?, ?)",
+                ownerId,
+                originalUrl);
         }
 
         std::unique_ptr<sql::ResultSet> idResult(
@@ -52,15 +77,18 @@ MySqlShortLinkRepository::create(const std::string& originalUrl,
         }
 
         const std::uint64_t id = static_cast<std::uint64_t>(idResult->getUInt64(1));
-        const std::string code = encodeBase62(id);
+        const std::string code = customCode ? requestedCode : encodeBase62(id);
         const std::string idString = std::to_string(id);
 
-        conn->executeUpdate("UPDATE short_links SET code = ? WHERE id = ?",
-                            code,
-                            idString);
+        if (!customCode)
+        {
+            conn->executeUpdate("UPDATE short_links SET code = ? WHERE id = ?",
+                                code,
+                                idString);
+        }
 
         std::unique_ptr<sql::ResultSet> recordResult(conn->executeQuery(
-            "SELECT id, code, original_url, status, "
+            "SELECT id, owner_id, code, original_url, status, "
             "TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', expires_at) AS expires_at_epoch, "
             "UNIX_TIMESTAMP(created_at) AS created_at_epoch, "
             "UNIX_TIMESTAMP(updated_at) AS updated_at_epoch "
@@ -91,6 +119,12 @@ MySqlShortLinkRepository::create(const std::string& originalUrl,
             catch (...)
             {
             }
+        }
+        const std::string message = e.what();
+        if (customCode && (message.find("Duplicate entry") != std::string::npos ||
+                           message.find("1062") != std::string::npos))
+        {
+            throw ShortCodeConflict();
         }
         throw;
     }
@@ -124,7 +158,7 @@ ShortLinkRepository::LookupResult MySqlShortLinkRepository::findByCode(
         auto conn = http::db::DbConnectionPool::getInstance().getConnection();
         std::unique_ptr<sql::ResultSet> result(
             conn->executeQuery(
-                               "SELECT id, code, original_url, status, "
+                               "SELECT id, owner_id, code, original_url, status, "
                                "TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', expires_at) "
                                "AS expires_at_epoch, "
                                "UNIX_TIMESTAMP(created_at) AS created_at_epoch, "
@@ -149,6 +183,39 @@ ShortLinkRepository::LookupResult MySqlShortLinkRepository::findByCode(
     }
 }
 
+std::optional<ShortLinkRepository::ShortLinkRecord>
+MySqlShortLinkRepository::findByCodeForOwner(const std::string& code,
+                                             std::uint64_t ownerId) const
+{
+    try
+    {
+        auto conn = http::db::DbConnectionPool::getInstance().getConnection();
+        std::unique_ptr<sql::ResultSet> result(conn->executeQuery(
+            "SELECT id, owner_id, code, original_url, status, "
+            "TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', expires_at) "
+            "AS expires_at_epoch, "
+            "UNIX_TIMESTAMP(created_at) AS created_at_epoch, "
+            "UNIX_TIMESTAMP(updated_at) AS updated_at_epoch "
+            "FROM short_links WHERE code = ? AND owner_id = ? LIMIT 1",
+            code,
+            ownerId));
+        if (!result || !result->next())
+        {
+            return std::nullopt;
+        }
+        return readRecord(result.get());
+    }
+    catch (...)
+    {
+        if (metrics_ != nullptr)
+        {
+            metrics_->recordBackendError(ShortLinkMetrics::Backend::Mysql,
+                                         ShortLinkMetrics::BackendOperation::Find);
+        }
+        throw;
+    }
+}
+
 std::vector<ShortLinkRepository::ShortLinkRecord> MySqlShortLinkRepository::list(
     const ListQuery& query) const
 {
@@ -157,11 +224,29 @@ std::vector<ShortLinkRepository::ShortLinkRecord> MySqlShortLinkRepository::list
         auto conn = http::db::DbConnectionPool::getInstance().getConnection();
         std::unique_ptr<sql::ResultSet> result;
         const std::string fields =
-            "SELECT id, code, original_url, status, "
+            "SELECT id, owner_id, code, original_url, status, "
             "TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', expires_at) AS expires_at_epoch, "
             "UNIX_TIMESTAMP(created_at) AS created_at_epoch, "
             "UNIX_TIMESTAMP(updated_at) AS updated_at_epoch FROM short_links ";
-        if (query.status)
+        if (query.ownerId && query.status)
+        {
+            const std::string statusValue = statusToString(*query.status);
+            result.reset(conn->executeQuery(
+                fields + "WHERE owner_id = ? AND id > ? AND status = ? ORDER BY id ASC LIMIT ?",
+                *query.ownerId,
+                query.cursor,
+                statusValue,
+                query.limit));
+        }
+        else if (query.ownerId)
+        {
+            result.reset(conn->executeQuery(
+                fields + "WHERE owner_id = ? AND id > ? ORDER BY id ASC LIMIT ?",
+                *query.ownerId,
+                query.cursor,
+                query.limit));
+        }
+        else if (query.status)
         {
             const std::string statusValue = statusToString(*query.status);
             result.reset(conn->executeQuery(
@@ -202,49 +287,69 @@ std::optional<ShortLinkRepository::ShortLinkRecord> MySqlShortLinkRepository::up
     {
         auto conn = http::db::DbConnectionPool::getInstance().getConnection();
         const std::string statusValue = update.status ? statusToString(*update.status) : "";
+        const std::uint64_t ownerId = update.ownerId.value_or(0);
         if (update.status && update.expiresAtProvided && update.expiresAt)
         {
             conn->executeUpdate(
                 "UPDATE short_links SET status = ?, "
                 "expires_at = DATE_ADD('1970-01-01 00:00:00', INTERVAL ? SECOND) "
-                "WHERE code = ?",
+                "WHERE code = ? AND (? = 0 OR owner_id = ?)",
                 statusValue,
                 *update.expiresAt,
-                code);
+                code,
+                ownerId,
+                ownerId);
         }
         else if (update.status && update.expiresAtProvided)
         {
             conn->executeUpdate(
-                "UPDATE short_links SET status = ?, expires_at = NULL WHERE code = ?",
+                "UPDATE short_links SET status = ?, expires_at = NULL "
+                "WHERE code = ? AND (? = 0 OR owner_id = ?)",
                 statusValue,
-                code);
+                code,
+                ownerId,
+                ownerId);
         }
         else if (update.status)
         {
             conn->executeUpdate(
-                "UPDATE short_links SET status = ? WHERE code = ?", statusValue, code);
+                "UPDATE short_links SET status = ? "
+                "WHERE code = ? AND (? = 0 OR owner_id = ?)",
+                statusValue,
+                code,
+                ownerId,
+                ownerId);
         }
         else if (update.expiresAtProvided && update.expiresAt)
         {
             conn->executeUpdate(
                 "UPDATE short_links SET "
                 "expires_at = DATE_ADD('1970-01-01 00:00:00', INTERVAL ? SECOND) "
-                "WHERE code = ?",
+                "WHERE code = ? AND (? = 0 OR owner_id = ?)",
                 *update.expiresAt,
-                code);
+                code,
+                ownerId,
+                ownerId);
         }
         else if (update.expiresAtProvided)
         {
-            conn->executeUpdate("UPDATE short_links SET expires_at = NULL WHERE code = ?", code);
+            conn->executeUpdate(
+                "UPDATE short_links SET expires_at = NULL "
+                "WHERE code = ? AND (? = 0 OR owner_id = ?)",
+                code,
+                ownerId,
+                ownerId);
         }
 
         std::unique_ptr<sql::ResultSet> result(conn->executeQuery(
-            "SELECT id, code, original_url, status, "
+            "SELECT id, owner_id, code, original_url, status, "
             "TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', expires_at) AS expires_at_epoch, "
             "UNIX_TIMESTAMP(created_at) AS created_at_epoch, "
             "UNIX_TIMESTAMP(updated_at) AS updated_at_epoch "
-            "FROM short_links WHERE code = ? LIMIT 1",
-            code));
+            "FROM short_links WHERE code = ? AND (? = 0 OR owner_id = ?) LIMIT 1",
+            code,
+            ownerId,
+            ownerId));
         if (!result || !result->next())
         {
             return std::nullopt;
@@ -272,6 +377,7 @@ ShortLinkRepository::ShortLinkRecord MySqlShortLinkRepository::readRecord(sql::R
 
     ShortLinkRecord record;
     record.id = result->getUInt64("id");
+    record.ownerId = result->getUInt64("owner_id");
     record.code = result->getString("code");
     record.originalUrl = result->getString("original_url");
     record.status = *status;

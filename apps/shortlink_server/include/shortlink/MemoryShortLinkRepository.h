@@ -20,8 +20,13 @@ public:
 
     std::optional<ShortLinkRecord> create(
         const std::string& originalUrl,
-        std::optional<std::int64_t> expiresAt = std::nullopt) override;
+        std::optional<std::int64_t> expiresAt = std::nullopt,
+        std::uint64_t ownerId = 1,
+        std::optional<std::string> customCode = std::nullopt) override;
     LookupResult findByCode(const std::string& code) const override;
+    std::optional<ShortLinkRecord> findByCodeForOwner(
+        const std::string& code,
+        std::uint64_t ownerId) const override;
     LookupSource defaultLookupSource() const noexcept override
     {
         return LookupSource::Memory;

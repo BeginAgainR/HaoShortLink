@@ -7,7 +7,6 @@ on:
       - master
       - "refactor/**"
       - "feature/**"
-      - "codex/**"
   pull_request:
 
 permissions:
@@ -43,6 +42,7 @@ jobs:
             librdkafka-dev \
             nlohmann-json3-dev \
             default-mysql-client \
+            ruby \
             redis-tools
 
       - name: Check shell script syntax
@@ -50,6 +50,9 @@ jobs:
           for script in tests/scripts/*.sh; do
             bash -n "${script}"
           done
+
+      - name: Validate OpenAPI route contract
+        run: bash tests/scripts/openapi_contract_test.sh
 
       - name: Build and install muduo core libraries
         run: |
@@ -77,6 +80,11 @@ jobs:
 
       - name: Run API smoke test
         run: bash tests/scripts/api_smoke_test.sh
+
+      - name: Run schema migration tests
+        env:
+          SHORTLINK_MYSQL_IMAGE: mysql:8.0
+        run: bash tests/scripts/schema_migration_test.sh
 
       - name: Run MySQL and Redis integration tests
         env:

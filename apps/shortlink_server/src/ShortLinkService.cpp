@@ -82,15 +82,19 @@ ShortLinkService::ShortLinkService(ShortLinkRepository& repository, ShortLinkMet
 
 std::optional<ShortLinkService::ShortLink> ShortLinkService::createShortLink(
     const std::string& originalUrl,
-    std::optional<std::int64_t> expiresAt)
+    std::optional<std::int64_t> expiresAt,
+    std::uint64_t ownerId,
+    std::optional<std::string> customCode)
 {
-    if (!isValidUrl(originalUrl) || (expiresAt && *expiresAt <= nowEpochSeconds()))
+    if (!isValidUrl(originalUrl) || ownerId == 0 ||
+        (expiresAt && *expiresAt <= nowEpochSeconds()) ||
+        (customCode && !isValidCustomCode(*customCode)))
     {
         return std::nullopt;
     }
 
     const std::optional<ShortLinkRepository::ShortLinkRecord> record =
-        repository_.create(originalUrl, expiresAt);
+        repository_.create(originalUrl, expiresAt, ownerId, std::move(customCode));
     if (!record)
     {
         return std::nullopt;
@@ -156,6 +160,13 @@ std::optional<ShortLinkRepository::ShortLinkRecord> ShortLinkService::get(
     return repository_.findByCode(code).record;
 }
 
+std::optional<ShortLinkRepository::ShortLinkRecord> ShortLinkService::getForOwner(
+    const std::string& code,
+    std::uint64_t ownerId) const
+{
+    return repository_.findByCodeForOwner(code, ownerId);
+}
+
 std::vector<ShortLinkRepository::ShortLinkRecord> ShortLinkService::list(
     const ShortLinkRepository::ListQuery& query) const
 {
@@ -172,6 +183,31 @@ std::optional<ShortLinkRepository::ShortLinkRecord> ShortLinkService::updateLife
 bool ShortLinkService::isValidUrl(const std::string& url) const
 {
     return startsWith(url, "http://") || startsWith(url, "https://");
+}
+
+bool ShortLinkService::isValidCustomCode(const std::string& code)
+{
+    if (code.size() < 4 || code.size() > 32)
+    {
+        return false;
+    }
+    for (const unsigned char ch : code)
+    {
+        if (!((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
+              (ch >= '0' && ch <= '9') || ch == '_' || ch == '-'))
+        {
+            return false;
+        }
+    }
+    static const char* reserved[] { "api", "app", "health", "internal", "metrics", "s" };
+    for (const char* value : reserved)
+    {
+        if (code == value)
+        {
+            return false;
+        }
+    }
+    return true;
 }
 
 bool ShortLinkService::isExpired(const ShortLinkRepository::ShortLinkRecord& record,

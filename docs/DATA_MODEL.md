@@ -1,135 +1,121 @@
 # 数据模型
 
-状态：已建立基础版，持续维护
-当前实现：已实现短链生命周期记录、MySQL 持久化、可选 Redis 生命周期查询缓存和 v1.9 访问统计投影
+状态：v2.0 已实现
 
-## 说明
+MySQL 是持久化模式下用户、会话、短链接和访问统计的事实存储。Redis 只保存可丢弃的短码查询缓存与
+限流窗口；Kafka 保存有限 retention 范围内的访问事件。
 
-本文档用于记录短链接业务的数据概念和持久化方向。当前实现支持进程内存保存短码到原始 URL
-的映射，也支持 MySQL 持久化和可选 Redis 查询缓存。
+## Schema 版本
 
-当前代码已经将短链接存储抽象为 repository 接口，默认实现仍是内存版。
+顺序 SQL 位于 `apps/shortlink_server/sql/`：
 
-## 概念实体
+| 版本 | 作用 |
+| --- | --- |
+| 001 | 创建 `short_links` |
+| 002 | 固化短码大小写敏感排序规则 |
+| 003 | 增加状态和过期时间 |
+| 004 | 增加访问事件收据与统计投影 |
+| 005 | 增加用户、会话、owner 和 `schema_migrations` |
 
-### ShortLink
+`schema_migrations(version, name, applied_at)` 记录已应用版本。迁移脚本支持空库初始化和 v1.9 原地升级，
+看到版本 5 时仍会校验用户、会话、owner、索引、外键、历史版本和 `legacy-system` 是否完整。
 
-表示一条短链接映射关系。
+## `users`
 
-候选字段：
+| 字段 | 语义 |
+| --- | --- |
+| `id` | 自增用户 id |
+| `username` | 注册时的展示形式，最大 32 字符 |
+| `username_normalized` | ASCII 小写规范化值，唯一且大小写不敏感登录 |
+| `password_hash` | 版本化的 scrypt 编码串 |
+| `status` | `active` 或 `disabled` |
+| `created_at` / `updated_at` | 基础审计时间 |
 
-- `id`：数据库自增主键，MySQL 版用于生成 Base62 短码。
-- `code`：短码。
-- `original_url`：原始 URL。
-- `created_at`：创建时间。
-- `updated_at`：更新时间。
-- `expires_at`：UTC 过期时间，可空；v1.7 已实现。
-- `status`：`active` 或 `disabled`；v1.7 已实现。
-
-v1.1 计划先只持久化短链映射本身，不引入用户归属、访问统计、过期策略或软删除状态。
-
-### Visit
-
-表示一次短链接访问记录。
-
-候选字段：
-
-- `code`：访问的短码。
-- `visited_at`：访问时间。
-- `ip`：访问来源 IP，后置能力。
-- `client_info`：客户端信息，后置能力。
-
-当前状态：访问统计不属于 V1，也不属于 v1.1。
-
-### User
-
-表示用户或链接所有者。
-
-当前状态：用户系统暂缓，不属于 V1，也不属于 v1.1。
-
-## v1.1 持久化模型
-
-### MySQL 表
-
-v1.1 新增 `short_links` 表，作为短链映射的事实来源。
-
-当前表结构：
-
-```sql
-CREATE TABLE IF NOT EXISTS short_links (
-    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-    code VARCHAR(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL,
-    original_url TEXT NOT NULL,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    PRIMARY KEY (id),
-    UNIQUE KEY uk_short_links_code (code)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-```
-
-说明：
-
-- `id` 由 MySQL 自增生成，用于生成 Base62 短码。
-- `code` 保存最终短码，必须唯一；创建事务中允许临时为 `NULL`，用于先获取自增 id 再回写短码。
-- `original_url` 保存原始 URL，v1.1 不额外拆分域名或路径字段。
-- `created_at` 和 `updated_at` 用于基础审计和后续排查。
-- 暂不增加 `user_id`、`expires_at`、`status`、访问次数等字段。
-- `code` 显式使用 `utf8mb4_bin` 排序规则，使 MySQL 唯一索引与 Base62 短码的大小写敏感语义一致。
-
-### 短码生成
-
-v1.1 使用：
+密码格式为：
 
 ```text
-MySQL AUTO_INCREMENT id -> Base62(code)
+scrypt$32768$8$1$<16-byte-salt-hex>$<32-byte-derived-key-hex>
 ```
 
-创建短链时先让 MySQL 生成自增 id，再将 id 转换为 Base62 短码并在同一事务中写回
-`code` 字段。这样服务重启后不会因为进程内计数器重置而重复生成已有短码。
+每个密码使用独立随机 salt，校验使用常量时间比较。数据库不保存明文或可逆密码。
 
-## v1.7 生命周期迁移
-
-v1.7 通过独立迁移为现有表增加：
-
-```sql
-status VARCHAR(16) NOT NULL DEFAULT 'active'
-expires_at DATETIME NULL
-```
-
-已有记录自动保持 `active` 且 `expires_at IS NULL`，即迁移不会改变已有短链的跳转结果。
-`expires_at` 按 UTC 解释；过期由读取时比较当前时间计算，不持久化 `expired` 状态。
-
-### Redis 缓存
-
-v1.1 中 Redis 只缓存短码跳转查询结果：
+迁移 005 创建一个保留用户：
 
 ```text
-shortlink:{code} -> original_url
+username_normalized=legacy-system
+status=disabled
+password_hash=!
 ```
 
-查询语义：
+该账号不能登录，只承接 v1.9 历史链接归属。
 
-- Redis 命中时可直接返回跳转。
-- Redis 未命中时必须继续查询 MySQL。
-- MySQL 命中后回填 Redis。
-- Redis 不可用不应直接导致短链不存在，MySQL 仍是事实来源。
+## `user_sessions`
 
-当前状态：MySQL 持久化和 Redis 查询缓存均已接入；Redis 默认关闭，需要通过配置显式启用。
+| 字段 | 语义 |
+| --- | --- |
+| `token_hash` | 原始 32 字节随机 token 的 SHA-256 十六进制摘要，主键 |
+| `user_id` | 会话所属用户，外键到 `users.id` |
+| `expires_at` | 固定绝对过期时间 |
+| `revoked_at` | 显式退出时间，可空 |
+| `created_at` | 创建时间 |
 
-## v1.9 访问统计投影
+客户端 Cookie 只持有原始 token，数据库和日志不保存原始值。认证查询同时要求：会话存在、未撤销、
+未过期且用户仍为 `active`。当前没有 refresh token、滑动续期或自动清理作业；过期和已撤销行会保留，
+后续如数据量需要再增加与会话最长 TTL 对齐的受控清理任务。
 
-迁移 `004_create_access_statistics.sql` 新增：
+## `short_links`
 
-- `processed_access_events`：以 `event_id` 为主键保存来源坐标和处理 disposition，是重放幂等边界。
-- `short_link_access_totals`：以 `(short_link_id, result)` 为主键保存累计次数及最早 / 最近事件时间。
-- `short_link_access_hourly`：以 `(short_link_id, bucket_start_epoch, result)` 为主键保存 UTC 小时桶；天趋势查询时汇总小时数据。
+| 字段 | 语义 |
+| --- | --- |
+| `id` | 自增主键；随机短码的 Base62 发号来源 |
+| `owner_id` | 非空 owner，外键到 `users.id` |
+| `code` | 全局唯一、大小写敏感短码，最大 32 字符 |
+| `original_url` | 原始 HTTP(S) URL |
+| `status` | `active` 或 `disabled` |
+| `expires_at` | 可空 UTC 时间；空表示永不过期 |
+| `created_at` / `updated_at` | 创建和更新时间 |
 
-统计表通过 `short_link_id` 外键关联 `short_links.id`。`not_found` 只保存 ignored 收据，不按任意短码创建统计行；
-无法关联的其他结果作为 orphan 进入 DLQ。收据当前不自动清理，因为在仍允许 Kafka retained events 重放时
-删除收据会破坏幂等边界。
+关键索引：
 
-## 待决策
+- `uk_short_links_code(code)`：短码并发唯一性最终裁决。
+- `idx_short_links_owner_id_id(owner_id, id)`：owner 范围 cursor 分页。
+- `idx_short_links_owner_status_id(owner_id, status, id)`：owner + 状态分页。
 
-- 是否允许同一个原始 URL 生成多个短码。
-- 是否需要为 `original_url` 增加长度限制或 hash 索引。
-- 是否需要为不同环境设置不同的 Redis 默认 TTL。
+公开管理查询在 SQL 中同时使用 `code` 和 `owner_id`，不会先读取任意 owner 的对象再只在响应层过滤。
+公共跳转只按全局 `code` 查询，不要求登录。
+
+过期不是持久化状态；服务在读取时通过 `expires_at <= now` 计算。这样不会让 `status` 和时间形成两个
+相互冲突的事实来源。
+
+## 访问统计投影
+
+迁移 004 创建：
+
+- `processed_access_events`：以 `event_id` 为主键保存 Kafka 来源坐标和 disposition，是消费幂等边界。
+- `short_link_access_totals`：按 `(short_link_id, result)` 保存累计次数和首末事件时间。
+- `short_link_access_hourly`：按 `(short_link_id, bucket_start_epoch, result)` 保存 UTC 小时桶；天趋势按小时汇总。
+
+`not_found` 事件没有可关联的 `short_link_id`，只保存 ignored 收据；其他无法关联的事件进入 DLQ。
+收据不自动清理，因为 Kafka retained events 仍可重放时删除收据会破坏幂等边界。
+
+统计查询先以当前用户和短码确认 owner，再读取按 `short_link_id` 关联的投影。统计是最终一致的，不是短链
+事实数据。
+
+## Redis 查询缓存
+
+缓存键：
+
+```text
+shortlink:{code}
+```
+
+v2 缓存值包含 `id`、`owner_id`、状态、过期时间、审计时间和原始 URL。旧版纯 URL 或损坏值会被删除并
+按 miss 回源 MySQL。缓存 TTL 不超过配置 TTL，也不会晚于业务过期时间；生命周期更新后同步失效缓存。
+
+Redis 不可用、miss 或无效缓存都不能改变 MySQL 事实语义。
+
+## 回滚边界
+
+`sql/rollback/005_remove_users_sessions_and_ownership.sql` 只回滚 v2.0 新增的用户、会话、owner 和版本 5
+记录，保留 v1.9 的短链接生命周期与统计数据。执行入口要求显式传入 `--allow-data-loss`，因为用户和会话
+数据会被删除。生产回滚仍应先备份并停止写入；脚本不是无停机双向迁移方案。

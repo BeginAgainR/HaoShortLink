@@ -11,6 +11,8 @@ services:
       - "8080:80"
     volumes:
       - ./deploy/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./apps/shortlink_server/web:/usr/share/nginx/html/app:ro
+      - ./docs/openapi.yaml:/usr/share/nginx/html/openapi.yaml:ro
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/api/health || exit 1"]
       interval: 5s
@@ -27,8 +29,8 @@ services:
         MUDUO_TARBALL_URL: ${SHORTLINK_MUDUO_TARBALL_URL:-https://github.com/chenshuo/muduo/archive/f1fc77e0c13b80e5086ff457362c8a86d1b609d4.tar.gz}
     container_name: hao-shortlink-server
     depends_on:
-      mysql:
-        condition: service_healthy
+      schema_migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
     ports:
@@ -39,6 +41,27 @@ services:
       timeout: 3s
       retries: 20
       start_period: 10s
+
+  schema_migrate:
+    image: ${SHORTLINK_MYSQL_IMAGE:-mysql:8.0}
+    depends_on:
+      mysql:
+        condition: service_healthy
+    working_dir: /workspace
+    entrypoint:
+      - /bin/bash
+      - tests/scripts/migrate_shortlink_schema.sh
+    command:
+      - up
+    environment:
+      HAOHTTP_MYSQL_HOST: mysql
+      HAOHTTP_MYSQL_PORT: 3306
+      HAOHTTP_MYSQL_USER: hao_shortlink
+      HAOHTTP_MYSQL_PASSWORD: hao_shortlink
+      HAOHTTP_MYSQL_DATABASE: hao_shortlink
+    volumes:
+      - ./:/workspace:ro
+    restart: "no"
 
   prometheus:
     image: ${SHORTLINK_PROMETHEUS_IMAGE:-prom/prometheus:v3.13.0}

@@ -1,0 +1,422 @@
+openapi: 3.1.0
+info:
+  title: HaoShortLink API
+  version: 2.0.0
+  description: |
+    HaoShortLink 用户、会话、短链接管理和匿名跳转 API。
+    管理接口使用同源 HttpOnly Cookie；访问统计通过 Kafka 异步更新。
+servers:
+  - url: /
+tags:
+  - name: Health
+  - name: Authentication
+  - name: Short links
+  - name: Redirect
+paths:
+  /api/health:
+    get:
+      tags: [Health]
+      summary: 兼容健康检查
+      responses:
+        "200":
+          description: 进程存活
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Health"}
+  /api/health/live:
+    get:
+      tags: [Health]
+      summary: Liveness
+      responses:
+        "200":
+          description: 进程存活
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Health"}
+  /api/health/ready:
+    get:
+      tags: [Health]
+      summary: Readiness
+      responses:
+        "200":
+          description: 可以接收流量
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Readiness"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+  /api/auth/register:
+    post:
+      tags: [Authentication]
+      summary: 注册并创建会话
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/Credentials"}
+            example: {username: alice, password: correct-horse-battery}
+      responses:
+        "201":
+          description: 注册成功，响应设置 hao_session Cookie
+          headers:
+            Set-Cookie:
+              schema: {type: string}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/SessionResult"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "409": {$ref: "#/components/responses/Conflict"}
+  /api/auth/login:
+    post:
+      tags: [Authentication]
+      summary: 登录并创建会话
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/Credentials"}
+      responses:
+        "200":
+          description: 登录成功，响应设置 hao_session Cookie
+          headers:
+            Set-Cookie:
+              schema: {type: string}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/SessionResult"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+  /api/auth/session:
+    delete:
+      tags: [Authentication]
+      summary: 幂等撤销当前会话
+      responses:
+        "204": {description: 会话已撤销或原本不存在}
+        "403": {$ref: "#/components/responses/Forbidden"}
+  /api/me:
+    get:
+      tags: [Authentication]
+      summary: 查询当前用户
+      security: [{cookieAuth: []}]
+      responses:
+        "200":
+          description: 当前用户
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/User"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+  /api/short-links:
+    post:
+      tags: [Short links]
+      summary: 创建随机或自定义短码
+      security: [{cookieAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/CreateShortLink"}
+            example:
+              url: https://example.com/long/path
+              custom_code: launch_2026
+              expires_at: "2030-12-31T00:00:00Z"
+      responses:
+        "201":
+          description: 创建成功
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ShortLink"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "429": {$ref: "#/components/responses/RateLimited"}
+    get:
+      tags: [Short links]
+      summary: 分页列出当前用户的短链接
+      security: [{cookieAuth: []}]
+      parameters:
+        - in: query
+          name: cursor
+          schema: {type: integer, minimum: 0}
+        - in: query
+          name: limit
+          schema: {type: integer, minimum: 1, maximum: 100, default: 50}
+        - in: query
+          name: status
+          schema: {$ref: "#/components/schemas/ShortLinkStatus"}
+      responses:
+        "200":
+          description: owner 范围内的短链接
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    items: {$ref: "#/components/schemas/ShortLink"}
+                  next_cursor:
+                    oneOf:
+                      - {type: integer}
+                      - {type: "null"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+  /api/short-links/{code}:
+    parameters:
+      - $ref: "#/components/parameters/ShortCode"
+    get:
+      tags: [Short links]
+      summary: 查询当前用户的一条短链接
+      security: [{cookieAuth: []}]
+      responses:
+        "200":
+          description: 短链接详情
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ShortLink"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+    put:
+      tags: [Short links]
+      summary: 修改状态或过期时间
+      security: [{cookieAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/UpdateShortLink"}
+      responses:
+        "200":
+          description: 修改后的短链接
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ShortLink"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /api/short-links/{code}/statistics:
+    get:
+      tags: [Short links]
+      summary: 查询当前用户短链接的异步访问统计
+      security: [{cookieAuth: []}]
+      parameters:
+        - $ref: "#/components/parameters/ShortCode"
+        - in: query
+          name: interval
+          schema: {type: string, enum: [hour, day], default: day}
+        - in: query
+          name: from
+          schema: {type: string, format: date-time}
+        - in: query
+          name: to
+          schema: {type: string, format: date-time}
+      responses:
+        "200":
+          description: 最终一致的访问统计
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Statistics"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /s/{code}:
+    get:
+      tags: [Redirect]
+      summary: 匿名访问短码
+      parameters:
+        - $ref: "#/components/parameters/ShortCode"
+      responses:
+        "302":
+          description: 跳转到原始 URL
+          headers:
+            Location:
+              required: true
+              schema: {type: string, format: uri}
+        "404": {$ref: "#/components/responses/NotFound"}
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: hao_session
+  parameters:
+    ShortCode:
+      in: path
+      name: code
+      required: true
+      schema: {type: string, minLength: 1, maxLength: 32}
+  schemas:
+    Health:
+      type: object
+      required: [status]
+      properties:
+        status: {type: string, const: ok}
+    Readiness:
+      type: object
+      required: [status]
+      properties:
+        status: {type: string, enum: [ready, not_ready]}
+    Credentials:
+      type: object
+      additionalProperties: false
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          pattern: "^[A-Za-z][A-Za-z0-9_-]{2,31}$"
+        password: {type: string, minLength: 10, maxLength: 128}
+    User:
+      type: object
+      required: [id, username, status, created_at, updated_at]
+      properties:
+        id: {type: integer, minimum: 1}
+        username: {type: string}
+        status: {type: string, enum: [active, disabled]}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    SessionResult:
+      type: object
+      required: [user, session_expires_at]
+      properties:
+        user: {$ref: "#/components/schemas/User"}
+        session_expires_at: {type: string, format: date-time}
+    ShortLinkStatus:
+      type: string
+      enum: [active, disabled]
+    CreateShortLink:
+      type: object
+      additionalProperties: false
+      required: [url]
+      properties:
+        url:
+          type: string
+          format: uri
+          pattern: "^https?://"
+          description: 只接受 http 或 https URL
+        expires_at:
+          oneOf:
+            - {type: string, format: date-time}
+            - {type: "null"}
+          description: 创建时必须是未来 UTC 时间
+        custom_code:
+          oneOf:
+            - {type: string, pattern: "^[A-Za-z0-9_-]{4,32}$"}
+            - {type: "null"}
+          description: 大小写敏感；不能使用 api、app、health、internal、metrics 或 s
+    UpdateShortLink:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        status: {$ref: "#/components/schemas/ShortLinkStatus"}
+        expires_at:
+          oneOf:
+            - {type: string, format: date-time}
+            - {type: "null"}
+    ShortLink:
+      type: object
+      required: [id, code, short_url, original_url, status, expires_at, created_at, updated_at]
+      properties:
+        id: {type: integer, minimum: 1}
+        code: {type: string}
+        short_url: {type: string}
+        original_url: {type: string, format: uri}
+        status: {$ref: "#/components/schemas/ShortLinkStatus"}
+        expires_at:
+          oneOf:
+            - {type: string, format: date-time}
+            - {type: "null"}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    ResultCounts:
+      type: object
+      required: [success, disabled, expired, error]
+      properties:
+        success: {type: integer, minimum: 0}
+        disabled: {type: integer, minimum: 0}
+        expired: {type: integer, minimum: 0}
+        error: {type: integer, minimum: 0}
+    Statistics:
+      type: object
+      required: [code, consistency, summary, trend]
+      properties:
+        code: {type: string}
+        consistency: {type: string, const: eventual}
+        summary:
+          type: object
+          required: [access_count, attempt_count, result_counts, last_access_at, last_attempt_at]
+          properties:
+            access_count: {type: integer, minimum: 0}
+            attempt_count: {type: integer, minimum: 0}
+            result_counts: {$ref: "#/components/schemas/ResultCounts"}
+            last_access_at: {type: [string, "null"], format: date-time}
+            last_attempt_at: {type: [string, "null"], format: date-time}
+        trend:
+          type: object
+          required: [interval, from, to, points]
+          properties:
+            interval: {type: string, enum: [hour, day]}
+            from: {type: string, format: date-time}
+            to: {type: string, format: date-time}
+            points:
+              type: array
+              items:
+                type: object
+                required: [bucket_start, access_count, attempt_count, result_counts]
+                properties:
+                  bucket_start: {type: string, format: date-time}
+                  access_count: {type: integer, minimum: 0}
+                  attempt_count: {type: integer, minimum: 0}
+                  result_counts: {$ref: "#/components/schemas/ResultCounts"}
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: {type: string}
+            message: {type: string}
+  responses:
+    BadRequest:
+      description: 请求格式或字段不合法
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+    Unauthorized:
+      description: 没有有效会话
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+    Forbidden:
+      description: 当前部署不允许该操作，或浏览器请求不是同源请求
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+    NotFound:
+      description: 对象不存在、不可访问或短码不可跳转
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+    Conflict:
+      description: 用户名或短码唯一约束冲突
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+    RateLimited:
+      description: 创建限流
+      headers:
+        Retry-After:
+          schema: {type: integer, minimum: 1}
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+    ServiceUnavailable:
+      description: 必要依赖未就绪
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Readiness"}

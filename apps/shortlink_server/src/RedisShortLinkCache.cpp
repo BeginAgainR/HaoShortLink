@@ -69,7 +69,8 @@ RedisContextPtr connect(const RedisShortLinkCache::Config& config)
 
 std::string serialize(const ShortLinkRepository::ShortLinkRecord& record)
 {
-    return "v1|" + std::to_string(record.id) + "|" + statusToString(record.status) + "|" +
+    return "v2|" + std::to_string(record.id) + "|" + std::to_string(record.ownerId) + "|" +
+           statusToString(record.status) + "|" +
            (record.expiresAt ? std::to_string(*record.expiresAt) : "-") + "|" +
            std::to_string(record.createdAt) + "|" + std::to_string(record.updatedAt) + "|" +
            record.originalUrl;
@@ -79,14 +80,14 @@ std::optional<ShortLinkRepository::ShortLinkRecord> deserialize(
     const std::string& code,
     const std::string& value)
 {
-    if (value.compare(0, 3, "v1|") != 0)
+    if (value.compare(0, 3, "v2|") != 0)
     {
         return std::nullopt;
     }
 
     std::vector<std::string> fields;
     std::size_t begin = 0;
-    for (int separator = 0; separator < 6; ++separator)
+    for (int separator = 0; separator < 7; ++separator)
     {
         const std::size_t end = value.find('|', begin);
         if (end == std::string::npos)
@@ -97,29 +98,30 @@ std::optional<ShortLinkRepository::ShortLinkRecord> deserialize(
         begin = end + 1;
     }
     fields.push_back(value.substr(begin));
-    if (fields.size() != 7 || fields[0] != "v1" || fields[6].empty())
+    if (fields.size() != 8 || fields[0] != "v2" || fields[7].empty())
     {
         return std::nullopt;
     }
 
     try
     {
-        const std::optional<ShortLinkRepository::Status> status = parseStatus(fields[2]);
+        const std::optional<ShortLinkRepository::Status> status = parseStatus(fields[3]);
         if (!status)
         {
             return std::nullopt;
         }
         ShortLinkRepository::ShortLinkRecord record;
         record.id = std::stoull(fields[1]);
+        record.ownerId = std::stoull(fields[2]);
         record.code = code;
-        record.originalUrl = fields[6];
+        record.originalUrl = fields[7];
         record.status = *status;
-        if (fields[3] != "-")
+        if (fields[4] != "-")
         {
-            record.expiresAt = std::stoll(fields[3]);
+            record.expiresAt = std::stoll(fields[4]);
         }
-        record.createdAt = std::stoll(fields[4]);
-        record.updatedAt = std::stoll(fields[5]);
+        record.createdAt = std::stoll(fields[5]);
+        record.updatedAt = std::stoll(fields[6]);
         return record;
     }
     catch (...)

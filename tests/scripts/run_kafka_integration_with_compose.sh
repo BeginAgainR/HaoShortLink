@@ -73,10 +73,9 @@ SHORTLINK_KAFKA_UI_IMAGE="${KAFKA_UI_IMAGE}" \
 SHORTLINK_KAFKA_EXTERNAL_HOST="${EXTERNAL_HOST}" \
 docker compose -f compose.yaml -f compose.kafka.yaml up -d mysql kafka kafka_topic_init kafka_ui
 wait_for_healthy "hao-shortlink-mysql" "MySQL"
-docker exec -i hao-shortlink-mysql \
-    mysql -uroot -phao_shortlink_root hao_shortlink \
-    < apps/shortlink_server/sql/004_create_access_statistics.sql
-echo "PASS: v1.9 access statistics migration applied"
+SHORTLINK_MYSQL_IMAGE="${SHORTLINK_MYSQL_IMAGE:-mysql:8.0}" \
+docker compose -f compose.yaml -f compose.kafka.yaml run --rm schema_migrate
+echo "PASS: schema migration completed before Kafka integration tests"
 
 topic_description="$(docker exec hao-shortlink-kafka /opt/kafka/bin/kafka-topics.sh \
     --bootstrap-server 127.0.0.1:29092 \

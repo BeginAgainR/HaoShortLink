@@ -16,9 +16,11 @@ RedisCachedShortLinkRepository::RedisCachedShortLinkRepository(
 
 std::optional<ShortLinkRepository::ShortLinkRecord>
 RedisCachedShortLinkRepository::create(const std::string& originalUrl,
-                                       std::optional<std::int64_t> expiresAt)
+                                       std::optional<std::int64_t> expiresAt,
+                                       std::uint64_t ownerId,
+                                       std::optional<std::string> customCode)
 {
-    return sourceRepository_.create(originalUrl, expiresAt);
+    return sourceRepository_.create(originalUrl, expiresAt, ownerId, std::move(customCode));
 }
 
 ShortLinkRepository::LookupResult RedisCachedShortLinkRepository::findByCode(
@@ -36,6 +38,13 @@ ShortLinkRepository::LookupResult RedisCachedShortLinkRepository::findByCode(
         cache_.set(*result.record);
     }
     return result;
+}
+
+std::optional<ShortLinkRepository::ShortLinkRecord>
+RedisCachedShortLinkRepository::findByCodeForOwner(const std::string& code,
+                                                   std::uint64_t ownerId) const
+{
+    return sourceRepository_.findByCodeForOwner(code, ownerId);
 }
 
 std::vector<ShortLinkRepository::ShortLinkRecord> RedisCachedShortLinkRepository::list(

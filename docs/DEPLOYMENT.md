@@ -1,83 +1,107 @@
-# 部署计划
+# 部署边界
 
-状态：已建立本地方案，持续维护
-当前实现：已整理 Linux VM 手工运行说明；已新增并验证本地 Docker Compose 编排；已接入 `shortlink_server`、Nginx、Prometheus、Grafana、服务内部 `/metrics` 和最小 dashboard
+状态：v2.0 本地 Compose 方案已实现；线上部署与 Kubernetes 尚未实现
 
-## 说明
+## 当前本地拓扑
 
-本文档用于后续记录 HaoShortLink 的部署方式。当前项目已接入 MySQL 和可选 Redis 查询缓存，
-并新增了本地开发用 Docker Compose 编排。当前 Compose 可以在 OrbStack Docker 中启动
-MySQL、Redis、`shortlink_server`、Nginx、Prometheus 和 Grafana；也保留了在 `haoHTTP` Linux VM 中
-手工构建和运行 `shortlink_server` 的调试方式。当前暂不提供完整线上部署步骤。
-
-当前可用的运行方式记录在：
+`compose.yaml` 提供可重复的本地产品与监控环境：
 
 ```text
-docs/RUNBOOK.md
+Nginx :8080
+  -> /app/、/openapi.yaml
+  -> shortlink_server
+       -> MySQL
+       -> Redis
+       -> 可选 Kafka overlay
+  -> Prometheus :9090 -> Grafana :3000
 ```
 
-当前边界：
+服务包括：
 
-- 支持在 Linux VM 中手工构建和运行 `shortlink_server`。
-- 支持使用内存存储、MySQL 持久化和可选 Redis 查询缓存。
-- 支持使用 Redis 对创建短链接接口施加可选的全局固定窗口限流。
-- Compose 使用 `/api/health/ready` 作为 `shortlink_server` 就绪检查，同时保留不探测依赖的 liveness。
-- 支持使用 OrbStack Docker Compose 启动本地 MySQL、Redis、`shortlink_server`、Nginx、Prometheus 和 Grafana。
-- 本地 Compose 保留只绑定 `127.0.0.1` 的 `shortlink_server:18080` 直连调试入口。
-- `/metrics` 只通过 `shortlink_server` 内部或直连调试端口访问，Nginx 默认不转发。
-- `/internal/` 生命周期管理接口只允许通过本机直连入口访问，Nginx 显式返回 `404`。
-- Prometheus 和 Grafana 分别通过 `127.0.0.1:9090`、`127.0.0.1:3000` 提供本地调试入口，不绑定全部宿主机网卡。
-- Prometheus 和 Grafana 使用 named volume；dashboard 和数据源通过仓库内 provisioning 文件自动加载。
-- 生产化部署应只对外暴露 Nginx 的 80/443 入口，后端服务和数据库缓存只在内部网络可见。
-- HTTPS/TLS 终止计划由 Nginx 配置承接，当前尚未实现。
-- 尚未定义线上发布、回滚、集中日志、监控高可用或告警方案。
+- `mysql`：用户、会话、链接 owner 和统计事实存储。
+- `schema_migrate`：一次性迁移进程；成功退出后应用才启动。
+- `redis`：可选查询缓存和可选全局创建限流。
+- `shortlink_server`：HTTP 应用。
+- `nginx`：同源管理页面与业务入口。
+- `prometheus` / `grafana`：本地观测。
 
-## 后续内容
+`compose.kafka.yaml` 额外提供单节点 KRaft Kafka、topic init、Kafka UI 和访问统计 consumer。该拓扑用于
+开发和故障验收，不声明生产高可用。
 
-计划补充：
+## 启动与入口
 
-- Linux 环境依赖。
-- 构建方式。
-- 服务启动方式。
-- 配置文件说明。
-- 生产化端口暴露策略。
-- Nginx HTTPS/TLS 配置。
-- MySQL 和 Redis 依赖说明。
-- 日志和故障排查。
+```bash
+docker compose up -d --build
+```
 
-## v2.1 Kubernetes 计划
+端口：
 
-状态：草案，尚未实现。
+| 入口 | 绑定 | 用途 |
+| --- | --- | --- |
+| Nginx | `0.0.0.0:8080` | `/app/`、OpenAPI、`/api/`、`/s/` |
+| shortlink_server | `127.0.0.1:18080` | 本机调试、内部指标 |
+| MySQL | `0.0.0.0:13306` | 本地开发依赖 |
+| Redis | `0.0.0.0:16379` | 本地开发依赖 |
+| Prometheus | `127.0.0.1:9090` | 本地指标查询 |
+| Grafana | `127.0.0.1:3000` | 本地 dashboard |
+| Kafka UI（overlay） | `127.0.0.1:18081` | 本地 topic / consumer 检查 |
 
-第一版聚焦应用工作负载、多副本和可重复演示：
+Nginx 显式阻断 `/internal/` 和 `/metrics`。旧内部生命周期 / 统计路由已被有 Cookie 和 owner 授权的
+`/api/short-links...` 取代，即使绕过 Nginx 直连也不再存在。
 
-- 固定一种本地 Kubernetes 环境并记录版本和资源；不同时维护多套本地发行版。
-- 部署 `shortlink_server`、`shortlink_event_consumer` 和管理入口，只在 MySQL 持久化模式下验证服务扩容。
-- v2.2 再增加独立 outbox relay 和生命周期审计 consumer 工作负载。
-- 使用 ConfigMap、Secret、Service、liveness / readiness probe 和资源 requests / limits。
-- 在 Ingress 与复用现有 Nginx 之间选择受控入口，继续保护内部 API、`/metrics` 和依赖端口。
-- 保持 Prometheus 可抓取，并验证滚动升级、回滚、Pod 重建、服务多副本和 Kafka consumer group 扩展。
-- 提供明确的启动、健康检查、完整演示和清理入口，在独立干净环境执行成功。
-- MySQL、Redis 和 Kafka 第一版允许使用外部依赖或仅供本地验收的单节点部署，不声明生产高可用。
-- HPA、Helm 和生产级有状态集群运维在基础清单与负载证据稳定后再评估。
+## 迁移与启动顺序
 
-阶段终点需要同时保留 Compose 作为轻量本地开发入口和 Kubernetes 作为编排验收入口；Kubernetes
-不是对 Compose 的删除式替换。详细终验见 `docs/FINAL_ACCEPTANCE.md`。
+空 MySQL 数据卷会按文件名执行 001-005；已有数据卷由 `schema_migrate` 检测并升级。应用依赖迁移进程
+成功退出：
 
-## v1.2 拆分建议
+```bash
+docker compose run --rm schema_migrate
+```
 
-v1.2 建议继续按小步推进：
+手工环境使用：
 
-1. 整理运行配置和运行手册。
-2. 增加 MySQL、Redis 的本地 Docker Compose 依赖编排。
-3. 增加服务 Dockerfile。
-4. 增加 Nginx 反向代理配置。
-5. 更新部署验证记录。
+```bash
+HAOHTTP_MYSQL_HOST=127.0.0.1 \
+HAOHTTP_MYSQL_PORT=3306 \
+bash tests/scripts/migrate_shortlink_schema.sh up
+```
+
+回滚 005 会删除用户和会话，必须先停止写入、完成备份并显式确认：
+
+```bash
+bash tests/scripts/migrate_shortlink_schema.sh down --allow-data-loss
+```
+
+回滚保留 v1.9 链接生命周期和统计表，但旧版本不具备 v2.0 用户管理能力。
+
+## 健康与依赖
+
+- 容器 healthcheck 使用 `/api/health/ready`。
+- MySQL 是持久化模式的必要依赖；不可用时 readiness 为 `503`。
+- Redis 查询缓存和限流可降级，不单独导致 readiness 失败。
+- Kafka producer 和统计 consumer 不在 HTTP readiness 依赖链中。
+- migration 失败时应用不会启动，避免在不完整 schema 上提供服务。
+
+## 凭据和 HTTPS
+
+Compose 内的 MySQL、Grafana 凭据只用于本地演示，不是生产默认值。真实部署必须通过受控 Secret 注入，
+不能提交真实密码。
+
+当前 Nginx 配置没有 HTTPS/TLS 终止。HTTPS 部署必须：
+
+- 在可信入口终止 TLS 并传递正确 `Host` 与 `X-Forwarded-Proto`。
+- 设置 `auth.cookie_secure=true`。
+- 只公开入口代理，隐藏应用、数据库、缓存、Kafka、指标和管理依赖端口。
 
 ## 当前不声明
 
-当前不声明以下能力已经可用：
+- 完整线上部署、集中日志、告警值班、备份恢复或 SLA。
+- TLS 证书自动化和可信代理链配置。
+- 生产级 MySQL、Redis、Kafka 或 Prometheus 高可用。
+- Kubernetes、滚动发布、回滚和应用多副本；属于 v2.1。
 
-- 完整线上容器化部署。
-- HTTPS/TLS 终止。
-- 线上运行方案。
+## v2.1 计划
+
+v2.1 将保留 Compose 作为轻量本地入口，同时增加固定一种本地 Kubernetes 环境，验证
+`shortlink_server`、事件 consumer 和管理入口的 Deployment、Service、ConfigMap、Secret、探针、
+资源限制、多副本、滚动发布、回滚和故障恢复。第一版不承担生产级有状态集群运维。

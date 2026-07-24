@@ -2,6 +2,11 @@ add_executable(hao_shortlink_tests
     minimal_test.cpp
     ${PROJECT_SOURCE_DIR}/apps/shortlink_server/src/AccessEvent.cpp
     ${PROJECT_SOURCE_DIR}/apps/shortlink_server/src/AccessStatistics.cpp
+    ${PROJECT_SOURCE_DIR}/apps/shortlink_server/src/AuthRepository.cpp
+    ${PROJECT_SOURCE_DIR}/apps/shortlink_server/src/AuthService.cpp
+    ${PROJECT_SOURCE_DIR}/apps/shortlink_server/src/MemoryAuthRepository.cpp
+    ${PROJECT_SOURCE_DIR}/apps/shortlink_server/src/PasswordHasher.cpp
+    ${PROJECT_SOURCE_DIR}/apps/shortlink_server/src/SameOriginPolicy.cpp
     ${PROJECT_SOURCE_DIR}/apps/shortlink_event_consumer/src/KafkaDeadLetterPublisher.cpp
     ${PROJECT_SOURCE_DIR}/apps/shortlink_event_consumer/src/ConsumerMetrics.cpp
     ${PROJECT_SOURCE_DIR}/apps/shortlink_server/src/MemoryShortLinkRepository.cpp
@@ -23,6 +28,8 @@ target_link_libraries(hao_shortlink_tests
     muduo_base
     ${RDKAFKA_LIBRARY}
     nlohmann_json::nlohmann_json
+    ssl
+    crypto
 )
 
 add_test(NAME hao_shortlink_tests COMMAND hao_shortlink_tests)

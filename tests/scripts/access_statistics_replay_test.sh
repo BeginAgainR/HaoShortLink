@@ -157,7 +157,7 @@ docker exec "${KAFKA_CONTAINER}" /opt/kafka/bin/kafka-topics.sh \
     >/dev/null
 docker exec "${MYSQL_CONTAINER}" mysql \
     -uhao_shortlink -phao_shortlink hao_shortlink \
-    -e "INSERT INTO short_links (code, original_url, status) VALUES ('${CODE}', 'https://example.com/replay', 'active')" \
+    -e "INSERT INTO short_links (owner_id, code, original_url, status) SELECT id, '${CODE}', 'https://example.com/replay', 'active' FROM users WHERE username_normalized = 'legacy-system'" \
     >/dev/null 2>&1
 
 write_config "${PRIMARY_CONFIG}" "${PRIMARY_GROUP}" "hao_shortlink"
@@ -210,7 +210,7 @@ for migration in "${ROOT_DIR}"/apps/shortlink_server/sql/*.sql; do
 done
 docker exec "${MYSQL_CONTAINER}" mysql \
     -uhao_shortlink -phao_shortlink "${REBUILD_DATABASE}" \
-    -e "INSERT INTO short_links (code, original_url, status) VALUES ('${CODE}', 'https://example.com/replay', 'active')" \
+    -e "INSERT INTO short_links (owner_id, code, original_url, status) SELECT id, '${CODE}', 'https://example.com/replay', 'active' FROM users WHERE username_normalized = 'legacy-system'" \
     >/dev/null 2>&1
 write_config "${REBUILD_CONFIG}" "${REBUILD_GROUP}" "${REBUILD_DATABASE}"
 start_consumer "${REBUILD_CONFIG}"
