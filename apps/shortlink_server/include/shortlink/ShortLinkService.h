@@ -40,15 +40,21 @@ public:
 
     std::optional<ShortLink> createShortLink(
         const std::string& originalUrl,
-        std::optional<std::int64_t> expiresAt = std::nullopt);
+        std::optional<std::int64_t> expiresAt = std::nullopt,
+        std::uint64_t ownerId = 1,
+        std::optional<std::string> customCode = std::nullopt);
     RedirectResult resolve(const std::string& code) const;
     std::optional<ShortLinkRepository::ShortLinkRecord> get(const std::string& code) const;
+    std::optional<ShortLinkRepository::ShortLinkRecord> getForOwner(
+        const std::string& code,
+        std::uint64_t ownerId) const;
     std::vector<ShortLinkRepository::ShortLinkRecord> list(
         const ShortLinkRepository::ListQuery& query) const;
     std::optional<ShortLinkRepository::ShortLinkRecord> updateLifecycle(
         const std::string& code,
         const ShortLinkRepository::LifecycleUpdate& update);
     bool isValidUrl(const std::string& url) const;
+    static bool isValidCustomCode(const std::string& code);
     static bool isExpired(const ShortLinkRepository::ShortLinkRecord& record,
                           std::int64_t nowEpochSeconds);
     static std::optional<std::int64_t> parseUtcTimestamp(const std::string& value);

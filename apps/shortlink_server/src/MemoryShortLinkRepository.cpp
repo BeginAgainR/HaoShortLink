@@ -18,18 +18,25 @@ constexpr std::size_t kMinCodeLength = 6;
 
 std::optional<ShortLinkRepository::ShortLinkRecord>
 MemoryShortLinkRepository::create(const std::string& originalUrl,
-                                  std::optional<std::int64_t> expiresAt)
+                                  std::optional<std::int64_t> expiresAt,
+                                  std::uint64_t ownerId,
+                                  std::optional<std::string> customCode)
 {
     std::lock_guard<std::mutex> lock(mutex_);
 
     const std::uint64_t id = nextId_++;
-    const std::string code = encodeBase62(id);
+    const std::string code = customCode ? *customCode : encodeBase62(id);
+    if (links_.find(code) != links_.end())
+    {
+        throw ShortCodeConflict();
+    }
     const std::int64_t now = std::chrono::duration_cast<std::chrono::seconds>(
                                  std::chrono::system_clock::now().time_since_epoch())
                                  .count();
 
     const ShortLinkRecord record {
         id,
+        ownerId,
         code,
         originalUrl,
         Status::Active,
@@ -39,6 +46,19 @@ MemoryShortLinkRepository::create(const std::string& originalUrl,
     };
     links_[code] = record;
     return record;
+}
+
+std::optional<ShortLinkRepository::ShortLinkRecord>
+MemoryShortLinkRepository::findByCodeForOwner(const std::string& code,
+                                              std::uint64_t ownerId) const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto it = links_.find(code);
+    if (it == links_.end() || it->second.ownerId != ownerId)
+    {
+        return std::nullopt;
+    }
+    return it->second;
 }
 
 ShortLinkRepository::LookupResult MemoryShortLinkRepository::findByCode(
@@ -61,7 +81,9 @@ std::vector<ShortLinkRepository::ShortLinkRecord> MemoryShortLinkRepository::lis
     records.reserve(links_.size());
     for (const auto& item : links_)
     {
-        if (item.second.id <= query.cursor || (query.status && item.second.status != *query.status))
+        if (item.second.id <= query.cursor ||
+            (query.ownerId && item.second.ownerId != *query.ownerId) ||
+            (query.status && item.second.status != *query.status))
         {
             continue;
         }
@@ -84,7 +106,7 @@ std::optional<ShortLinkRepository::ShortLinkRecord> MemoryShortLinkRepository::u
 {
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = links_.find(code);
-    if (it == links_.end())
+    if (it == links_.end() || (update.ownerId && it->second.ownerId != *update.ownerId))
     {
         return std::nullopt;
     }

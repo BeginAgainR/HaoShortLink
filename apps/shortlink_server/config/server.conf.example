@@ -7,6 +7,12 @@ server.thread_num=4
 log.level=INFO
 metrics.enabled=true
 
+# v2.0 username/password registration and server-side session settings.
+auth.registration_enabled=true
+auth.session_ttl_seconds=604800
+# Enable when the public entry is HTTPS.
+auth.cookie_secure=false
+
 # storage.type supports memory or mysql.
 # MySQL storage requires the short_links table.
 storage.type=memory

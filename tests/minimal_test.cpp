@@ -6,10 +6,14 @@
 #include "shortlink/AccessEvent.h"
 #include "shortlink/AccessEventPublisher.h"
 #include "shortlink/AccessStatistics.h"
+#include "shortlink/AuthService.h"
 #include "shortlink/ConsumerMetrics.h"
 #include "shortlink/KafkaDeadLetterPublisher.h"
 #include "shortlink/MemoryShortLinkRepository.h"
+#include "shortlink/MemoryAuthRepository.h"
+#include "shortlink/PasswordHasher.h"
 #include "shortlink/RedirectHandler.h"
+#include "shortlink/SameOriginPolicy.h"
 #include "shortlink/ShortLinkService.h"
 #include "shortlink/ShortLinkMetrics.h"
 #include "utils/RequestId.h"
@@ -71,6 +75,15 @@ http::HttpRequest makeRequest(http::HttpRequest::Method method, const std::strin
 
     req.setPath(path.data(), path.data() + path.size());
     return req;
+}
+
+void addHeader(http::HttpRequest* request,
+               const std::string& name,
+               const std::string& value)
+{
+    const std::string header = name + ": " + value;
+    const char* start = header.data();
+    request->addHeader(start, start + name.size(), start + header.size());
 }
 
 std::string responseToString(const http::HttpResponse& response)
@@ -164,6 +177,32 @@ void testRequestHeaderLookupIsCaseInsensitive()
 
     expect(req.getHeader("X-Request-ID") == "client-id",
            "HTTP header lookup should be case insensitive");
+}
+
+void testSameOriginPolicy()
+{
+    http::HttpRequest sameOrigin = makeRequest(http::HttpRequest::kPost, "/api/auth/login");
+    addHeader(&sameOrigin, "Host", "links.example.test");
+    addHeader(&sameOrigin, "X-Forwarded-Proto", "https");
+    addHeader(&sameOrigin, "Origin", "https://links.example.test");
+    expect(shortlink::isSameOriginRequest(sameOrigin),
+           "matching forwarded scheme and host should pass same-origin policy");
+
+    http::HttpRequest crossOrigin = makeRequest(http::HttpRequest::kPost, "/api/short-links");
+    addHeader(&crossOrigin, "Host", "links.example.test");
+    addHeader(&crossOrigin, "X-Forwarded-Proto", "https");
+    addHeader(&crossOrigin, "Origin", "https://attacker.example.test");
+    expect(!shortlink::isSameOriginRequest(crossOrigin),
+           "a different Origin authority should be rejected");
+
+    http::HttpRequest fetchMetadata = makeRequest(http::HttpRequest::kPost, "/api/short-links");
+    addHeader(&fetchMetadata, "Sec-Fetch-Site", "cross-site");
+    expect(!shortlink::isSameOriginRequest(fetchMetadata),
+           "cross-site Fetch Metadata should be rejected even without Origin");
+
+    http::HttpRequest nonBrowser = makeRequest(http::HttpRequest::kPost, "/api/short-links");
+    expect(shortlink::isSameOriginRequest(nonBrowser),
+           "non-browser API clients may omit browser origin headers");
 }
 
 void testRequestIdValidationAndGeneration()
@@ -745,12 +784,15 @@ class CountingRepository : public shortlink::ShortLinkRepository
 public:
     std::optional<ShortLinkRecord> create(
         const std::string& originalUrl,
-        std::optional<std::int64_t> expiresAt = std::nullopt) override
+        std::optional<std::int64_t> expiresAt = std::nullopt,
+        std::uint64_t ownerId = 1,
+        std::optional<std::string> customCode = std::nullopt) override
     {
         ++createCalls;
         return ShortLinkRecord {
             1,
-            "custom01",
+            ownerId,
+            customCode.value_or("custom01"),
             originalUrl,
             Status::Active,
             expiresAt,
@@ -764,6 +806,7 @@ public:
         if (code == "custom01")
         {
             return { ShortLinkRecord { 1,
+                                       1,
                                        "custom01",
                                        "https://example.com/custom",
                                        Status::Active,
@@ -774,6 +817,16 @@ public:
         }
 
         return { std::nullopt, LookupSource::Memory };
+    }
+
+    std::optional<ShortLinkRecord> findByCodeForOwner(
+        const std::string& code,
+        std::uint64_t ownerId) const override
+    {
+        const LookupResult result = findByCode(code);
+        return result.record && result.record->ownerId == ownerId
+                   ? result.record
+                   : std::nullopt;
     }
 
     LookupSource defaultLookupSource() const noexcept override
@@ -798,9 +851,18 @@ class FailingLookupRepository : public shortlink::ShortLinkRepository
 public:
     std::optional<ShortLinkRecord> create(
         const std::string&,
-        std::optional<std::int64_t> = std::nullopt) override
+        std::optional<std::int64_t> = std::nullopt,
+        std::uint64_t = 1,
+        std::optional<std::string> = std::nullopt) override
     {
         return std::nullopt;
+    }
+
+    std::optional<ShortLinkRecord> findByCodeForOwner(
+        const std::string&,
+        std::uint64_t) const override
+    {
+        throw std::runtime_error("lookup failed");
     }
 
     LookupResult findByCode(const std::string&) const override
@@ -1024,6 +1086,105 @@ void testMemoryRepositoryLifecycleList()
            "memory list should support cursor and status filter");
 }
 
+void testPasswordHasherRoundTrip()
+{
+    const auto encoded = shortlink::PasswordHasher::hash("correct-horse-battery");
+    expect(encoded.has_value(), "password hashing should succeed");
+    expect(encoded->find("scrypt$") == 0, "password hash should record the scrypt format");
+    expect(shortlink::PasswordHasher::verify("correct-horse-battery", *encoded),
+           "password verifier should accept the original password");
+    expect(!shortlink::PasswordHasher::verify("wrong-password", *encoded),
+           "password verifier should reject a different password");
+    expect(!shortlink::PasswordHasher::verify("correct-horse-battery", "invalid"),
+           "password verifier should reject a malformed hash");
+}
+
+void testAuthServiceRegistrationSessionAndLogout()
+{
+    shortlink::MemoryAuthRepository repository;
+    shortlink::AuthService service(repository, 3600);
+
+    const auto registered = service.registerUser("Alice_1", "a-secure-password");
+    expect(registered.status == shortlink::AuthService::ResultStatus::Success &&
+               registered.session.has_value(),
+           "valid credentials should register and create a session");
+    expect(registered.session->user.username == "Alice_1",
+           "registration should preserve the display username");
+    expect(registered.session->token.size() == 64,
+           "session token should contain 32 random bytes encoded as hex");
+    expect(shortlink::AuthService::tokenHash(registered.session->token) !=
+               registered.session->token,
+           "the persisted session key should be a digest rather than the raw token");
+    expect(service.authenticate(registered.session->token).has_value(),
+           "new session should authenticate");
+
+    expect(service.registerUser("9invalid", "a-secure-password").status ==
+               shortlink::AuthService::ResultStatus::InvalidUsername,
+           "username should begin with an ASCII letter");
+    expect(service.registerUser("\xc3\xa9-user", "a-secure-password").status ==
+               shortlink::AuthService::ResultStatus::InvalidUsername,
+           "username should reject non-ASCII letters");
+    expect(service.registerUser("ValidUser", "short").status ==
+               shortlink::AuthService::ResultStatus::InvalidPassword,
+           "password shorter than the minimum should be rejected");
+
+    const auto conflict = service.registerUser("alice_1", "another-password");
+    expect(conflict.status == shortlink::AuthService::ResultStatus::UsernameConflict,
+           "normalized usernames should be unique");
+    const auto invalidLogin = service.login("Alice_1", "wrong-password");
+    expect(invalidLogin.status == shortlink::AuthService::ResultStatus::InvalidCredentials,
+           "wrong password should return the unified credential error");
+
+    service.logout(registered.session->token);
+    expect(!service.authenticate(registered.session->token).has_value(),
+           "logout should revoke the current session");
+
+    const auto loggedIn = service.login("ALICE_1", "a-secure-password");
+    expect(loggedIn.status == shortlink::AuthService::ResultStatus::Success,
+           "login should use the normalized username");
+
+    shortlink::MemoryAuthRepository expiringRepository;
+    shortlink::AuthService expiringService(expiringRepository, 0);
+    const auto expired = expiringService.registerUser("ExpiredUser", "a-secure-password");
+    expect(expired.session && !expiringService.authenticate(expired.session->token),
+           "a session at its absolute expiry must be rejected");
+}
+
+void testCustomCodeAndOwnerIsolation()
+{
+    shortlink::MemoryShortLinkRepository repository;
+    shortlink::ShortLinkService service(repository);
+
+    const auto created = service.createShortLink(
+        "https://example.com/owned", std::nullopt, 42, std::string("Owned_Code"));
+    expect(created && created->record.code == "Owned_Code" && created->record.ownerId == 42,
+           "custom code should preserve code and owner");
+    expect(service.getForOwner("Owned_Code", 42).has_value(),
+           "owner should be able to read the link");
+    expect(!service.getForOwner("Owned_Code", 43).has_value(),
+           "a different owner should not read the link");
+    expect(!service.createShortLink(
+               "https://example.com/reserved", std::nullopt, 42, std::string("api")),
+           "reserved custom code should be rejected");
+
+    bool conflict = false;
+    try
+    {
+        service.createShortLink(
+            "https://example.com/conflict", std::nullopt, 43, std::string("Owned_Code"));
+    }
+    catch (const shortlink::ShortLinkRepository::ShortCodeConflict&)
+    {
+        conflict = true;
+    }
+    expect(conflict, "custom code uniqueness should apply across owners");
+
+    shortlink::ShortLinkRepository::ListQuery ownerQuery;
+    ownerQuery.ownerId = 43;
+    expect(repository.list(ownerQuery).empty(),
+           "owner-scoped list should not expose another user's link");
+}
+
 void testUtcTimestampParsing()
 {
     const auto leapDay = shortlink::ShortLinkService::parseUtcTimestamp("2028-02-29T12:34:56Z");
@@ -1046,6 +1207,7 @@ int main()
         {"router no match", testRouterNoMatch},
         {"request swap clears body state", testRequestSwapClearsBodyState},
         {"request header lookup is case insensitive", testRequestHeaderLookupIsCaseInsensitive},
+        {"same-origin state-change policy", testSameOriginPolicy},
         {"request ID validation and generation", testRequestIdValidationAndGeneration},
         {"request ID concurrent generation", testRequestIdConcurrentGeneration},
         {"access event round trip", testAccessEventRoundTrip},
@@ -1071,6 +1233,9 @@ int main()
         {"memory repository missing code", testMemoryRepositoryMissingCode},
         {"shortlink lifecycle disabled and expired", testShortLinkLifecycleDisabledAndExpired},
         {"memory repository lifecycle list", testMemoryRepositoryLifecycleList},
+        {"password hasher round trip", testPasswordHasherRoundTrip},
+        {"auth registration session and logout", testAuthServiceRegistrationSessionAndLogout},
+        {"custom code and owner isolation", testCustomCodeAndOwnerIsolation},
         {"UTC timestamp parsing", testUtcTimestampParsing}
     };
 
